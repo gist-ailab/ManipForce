@@ -1,9 +1,12 @@
 <div align="center">
-<img src="assets/banner.png" width="75%">
+<img src="assets/banner.png" width="50%">
 
 Geonhyup Lee, Yeongjin Lee, Kangmin Kim, Seongju Lee, Sangjun Noh, Seunghyeok Back, Kyoobin Lee
 
 </div>
+
+---
+
 
 This is an official implementation for "ManipForce: Force-Guided Policy Learning with Frequency-Aware Representation for Contact-Rich Manipulation", 2026 IEEE International Conference on Robotics and Automation (ICRA 2026).
 
