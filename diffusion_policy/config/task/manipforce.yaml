@@ -1,0 +1,74 @@
+name: manipforce
+
+camera_obs_latency: 0.125
+robot_obs_latency: 0.0001
+gripper_obs_latency: 0.02
+dataset_frequeny: 0 #59.94
+obs_down_sample_steps: 3 # origin 3, others are all 1, only cylinder controller is 2
+
+low_dim_obs_horizon: 2
+img_obs_horizon: 2
+ft_obs_horizon: 8  # Added: FT data sequence length # was originally 30
+action_horizon: 8 # origin 8
+ignore_proprioception: False
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    handeye_cam_1: #img
+      shape: [3, 256, 256]
+      horizon: ${task.img_obs_horizon} # int
+      latency_steps: 0 # float
+      down_sample_steps: ${task.obs_down_sample_steps} # int
+      type: rgb
+      ignore_by_policy: False
+    handeye_cam_2:
+      shape: [3, 256, 256]
+      horizon: ${task.img_obs_horizon} # int
+      latency_steps: 0 # float
+      down_sample_steps: ${task.obs_down_sample_steps} # int
+      type: rgb
+      ignore_by_policy: False
+    ft_data:
+      shape: [6]  # FT data dimension (fx, fy, fz, tx, ty, tz)
+      horizon: ${task.ft_obs_horizon} # int
+      latency_steps: 0 # float
+      down_sample_steps: ${task.obs_down_sample_steps} # int
+      type: ft
+      ignore_by_policy: False
+    pose_wrt_start:
+      shape: [7]  #(7D pose)
+      horizon: ${task.img_obs_horizon} # int
+      latency_steps: 0 # float
+      down_sample_steps: ${task.obs_down_sample_steps} # int
+      type: low_dim
+      ignore_by_policy: False
+  action: 
+    shape: [10]
+    horizon: ${task.action_horizon}
+    latency_steps: 0 # float
+    down_sample_steps: ${task.obs_down_sample_steps} # int
+
+task_name: &task_name manipforce
+dataset_path: example_demo_session/dataset.zarr.zip
+pose_repr: &pose_repr
+  obs_pose_repr: relative # abs or rel
+  action_pose_repr: relative # abs or rel or delta
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.dataset.manipforce_dataset.ManipForceDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  cache_dir: null
+  pose_repr: *pose_repr
+  action_padding: False
+  temporally_independent_normalization: False
+  repeat_frame_prob: 0.0
+  modal_masking_prob: 0.0
+  mask_strategy: "random_timesteps"
+  max_duration: null
+  seed: 42
+  val_ratio: 0.05
