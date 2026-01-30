@@ -1,5 +1,5 @@
 <div align="center">
-<h1> 💪 ManipForce <span style="display: inline-block; transform: scaleX(-1);">💪</span> </h1>
+<img src="assets/banner.png" width="75%">
 
 Geonhyup Lee, Yeongjin Lee, Kangmin Kim, Seongju Lee, Sangjun Noh, Seunghyeok Back, Kyoobin Lee
 
@@ -19,7 +19,7 @@ mamba env create -f environment.yml
 conda activate manipforce
 
 # 4. Download pre-trained models
-python pretrained/prepare_dinov2.py
+python checkpoints/prepare_dinov2.py
 ```
 
 ## 🏋️ Training

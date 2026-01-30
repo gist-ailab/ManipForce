@@ -48,7 +48,7 @@ class FMTObsEncoder(ModuleAttrMixin):
             use_ft_prediction: bool=False,
             ft_prediction_dim: int=None,
             proj_dim: int=256,
-            load_from: str='pretrained/dinov2-B_psz-16_pretrain.pth'
+            load_from: str='checkpoints/dinov2-B_psz-16_pretrain.pth'
         ):
         """
         Assumes rgb input: B,T,C,H,W

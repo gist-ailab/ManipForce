@@ -39,7 +39,7 @@ policy:
 
     model_name: 'dino_vitb16'
     pretrained: True
-    load_from: 'pretrained/dinov2_vitb16_256x256_pretrain_split_qkv.pth'
+    load_from: 'checkpoints/dinov2_vitb16_256x256_pretrain_split_qkv.pth'
     frozen: True
     
     global_pool: ''

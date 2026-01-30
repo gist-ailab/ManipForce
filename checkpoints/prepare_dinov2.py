@@ -127,8 +127,8 @@ def main():
     if split_qkv:
         converted_name = converted_name.replace('.pth', '_split_qkv.pth')
     
-    model_name = osp.join('./pretrained', model_name)
-    converted_name = osp.join('./pretrained', converted_name)
+    model_name = osp.join('./checkpoints', model_name)
+    converted_name = osp.join('./checkpoints', converted_name)
 
     # Download dinov2 model file if it doesn't exist
     if not osp.exists(model_name):
