@@ -341,7 +341,7 @@ class DinoVisionTransformer(nn.Module):
         return ret
 
 
-def create_dino_vits16(img_size=224, pretrained=True, load_from='pretrained/dinov2-S_psz-16_pretrain.pth'):
+def create_dino_vits16(img_size=224, pretrained=True, load_from='checkpoints/dinov2-S_psz-16_pretrain.pth'):
     logger.info(f"Creating DINOv2-S")
     if not pretrained:
         load_from = None
@@ -355,7 +355,7 @@ def create_dino_vits16(img_size=224, pretrained=True, load_from='pretrained/dino
         load_from=load_from
     )
 
-def create_dino_vitb16(img_size=224, pretrained=True, load_from='pretrained/dinov2-B_psz-16_pretrain.pth'):
+def create_dino_vitb16(img_size=224, pretrained=True, load_from='checkpoints/dinov2-B_psz-16_pretrain.pth'):
     logger.info(f"Creating DINOv2-B")
     if not pretrained:
         load_from = None
@@ -369,7 +369,7 @@ def create_dino_vitb16(img_size=224, pretrained=True, load_from='pretrained/dino
         load_from=load_from
     )
 
-def create_dino_vitl16(img_size=224, pretrained=True, load_from='pretrained/dinov2-L_psz-16_pretrain.pth'):
+def create_dino_vitl16(img_size=224, pretrained=True, load_from='checkpoints/dinov2-L_psz-16_pretrain.pth'):
     logger.info(f"Creating DINOv2-L")
     if not pretrained:
         load_from = None
@@ -383,7 +383,7 @@ def create_dino_vitl16(img_size=224, pretrained=True, load_from='pretrained/dino
         load_from=load_from
     )
 
-def create_dino_vitg16(img_size=224, pretrained=True, load_from='pretrained/dinov2-G_psz-16_pretrain.pth'):
+def create_dino_vitg16(img_size=224, pretrained=True, load_from='checkpoints/dinov2-G_psz-16_pretrain.pth'):
     logger.info(f"Creating DINOv2-G")
     if not pretrained:
         load_from = None
