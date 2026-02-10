@@ -1,7 +1,7 @@
 <div align="center">
 <img src="assets/banner.png" width="50%">
 
-Geonhyup Lee, Yeongjin Lee, Kangmin Kim, Seongju Lee, Sangjun Noh, Seunghyeok Back, Kyoobin Lee
+Geonhyup Lee, Youngjin Lee, Kangmin Kim, Seongju Lee, Sangjun Noh, Seunghyeok Back, Kyoobin Lee
 
 </div>
 
@@ -25,6 +25,25 @@ conda activate manipforce
 python checkpoints/prepare_dinov2.py
 ```
 
+## 📡 Data Collection & Processing
+```bash
+# Step 1: Capture multimodal data
+python scripts/collection/capture_multimodal_data_adv.py --data_path data/260210 --add_cam
+
+# Step 2: Synchronize multi-camera images
+python scripts/collection/align_multimodal_data.py --data_path data/260210
+
+# Step 3: Estimate wrist marker pose
+python scripts/processing/get_wrist_pose_adv.py --data_path data/260210 --visualize --add_cam
+
+# Step 4: Refine pose with filtering and interpolation
+python scripts/processing/pose_refinement.py --data_path data/260210
+
+# Step 5: Convert processed data to Zarr format
+python scripts/processing/change_to_zarr.py --data_path data/260210 --output_path data/260210.zarr
+```
+
+
 ## 🏋️ Training
 Our method supports different observation down-sampling steps.
 ```bash
@@ -33,6 +52,11 @@ python scripts/launch.py --gpu 0 --config manipforce_ods2_256x256 --dataset lanp
 
 # For other tasks (obs_down_sample_steps=3)
 python scripts/launch.py --gpu 0 --config manipforce_ods3_256x256 --dataset lanport
+```
+
+## 🤖 Evaluation
+```bash
+python scripts/eval/eval_robot.py --config_path "eval_config/gear_insertion.yaml" 
 ```
 
 ### 📝 Arguments

@@ -1,0 +1,84 @@
+# GUMI Multimodal Inference Configuration
+
+# Camera settings
+camera:
+  main_camera:
+    name: 'wrist_1'
+    serial_number: '241122306040' #241122306040, 339522300864
+    resolution: [1280, 800]
+    fps: 30
+  additional_camera:
+    name: 'additional_camera'
+    serial_number: '427622273372'
+    resolution: [640, 480]
+    fps: 30
+
+# Robot settings
+robot:
+  server_ip: '172.27.190.125'
+  server_port: 4999
+  # Drawing
+  # initial_pose: [0.5688784, -0.03900478, 0.05, 1, 0,0,0]
+  # Lan Insertion
+  # initial_pose: [0.54, -0.01, 0.13, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
+  # Gear Insertion
+  initial_pose: [0.49, -0.02, 0.12, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
+  max_pos_speed: 0.5  # m/s
+  max_rot_speed: 0.5  # rad/s
+
+# Control parameters
+control:
+  frequency: 200.0  # Hz
+  command_latency: 0.02  # seconds
+  action_exec_latency: 0.02  # seconds
+
+# Image processing
+image:
+  history_length: 2  # IMG_HIST
+  target_resolution: [256, 256]  # [width, height]
+
+# Action processing
+action:
+  position_scale: 0.5 # image only 0.5, lowdim 0.1
+  rotation_xy_scale: 0.5  # X,Y axis rotation scaling
+  rotation_z_scale: 0.5 # Z axis rotation scaling
+  smoothing_alpha: 0.5  # Low-pass filter coefficient
+
+# FT sensor settings
+ft_sensor:
+  rate_hz: 200.0
+  buffer_length: 10  # FT_RING_LEN
+  filter_alpha: 0.3  # 0.1~0.5 권장, 작을수록 더 부드러움
+  obs_horizon: 8  # FT_OBS_HORIZON
+  calibration_samples: 200
+
+# Gripper control
+gripper:
+  history_length: 5
+  close_threshold: 0.1  # predicted < 0.1 for close signal
+  open_threshold: 0.9   # predicted >= 0.9 for open signal
+  close_count_threshold: 3  # minimum close signals in history
+  open_count_threshold: 4   # minimum open signals in history
+  http_port: 5000
+
+# Model settings
+model:
+  num_inference_steps: 16  # DDIM inference iterations
+  warmup_steps: 10
+
+# Coordinate transformation matrix
+coordinate_transform:
+  R_mat: [
+    [0, -1, 0],
+    [1, 0, 0],
+    [0, 0, -1]
+  ]
+
+# Visualization
+visualization:
+  camera_index: 0
+
+# File paths (will be overridden by command line arguments)
+paths:
+  model_checkpoint: ''
+  output_video: 'output.mp4' 

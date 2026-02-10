@@ -1,0 +1,125 @@
+# GUMI Multimodal Inference Configuration
+
+# Camera settings
+camera:
+  main_camera:
+    name: 'wrist_1'
+    serial_number: '241122306040' #241122306040, 339522300864
+    resolution: [1280, 800]
+    fps: 30
+  additional_camera:
+    name: 'additional_camera'
+    serial_number: '427622273372'
+    resolution: [640, 480]
+    fps: 30
+
+# Robot settings
+robot:
+  server_ip: '172.27.190.125'
+  server_port: 4999
+  # baseline
+  initial_pose: [0.56, 0.04, 0.05, 0.9907264, -0.021747975, 0.13380258, -0.009225016] # [x, y, z, qw, qx, qy, qz]
+  
+  # img only
+  # initial_pose: [0.64, -0.05, 0.05, 0.9907264, -0.021747975, 0.13380258, -0.009225016] # [x, y, z, qw, qx, qy, qz]
+
+  # wo tool
+  # initial_pose: [0.56, -0.053454325, 0.005, 0.9919408, -0.033774976, 0.12211747, -0.00017694004]
+
+  random_pos_range: 0.0
+
+  max_pos_speed: 0.7  # m/s
+  max_rot_speed: 0.7  # rad/s
+  initial_tilt_axis: 'y'
+  initial_tilt_deg: 10
+# Control parameters
+control:
+  frequency: 200.0  # Hz
+  command_latency: 0.02  # seconds
+  action_exec_latency: 0.02  # seconds
+
+# Image processing
+image:
+  history_length: 2  # IMG_HIST
+  target_resolution: [256, 256]  # [width, height]
+
+# Action processing
+action:
+  position_xy_scale: 3.5 # image only 0.5, lowdim 0.1
+  position_z_scale: 3.5 # image only 0.5, lowdim 0.1
+  rotation_xy_scale: 3.5  # X,Y axis rotation scaling
+  rotation_z_scale: 0.1 # Z axis rotation scaling
+
+  # position_xy_scale: 1 # image only 0.5, lowdim 0.1
+  # position_z_scale: 1 # image only 0.5, lowdim 0.1
+  # rotation_xy_scale: 1  # X,Y axis rotation scaling
+  # rotation_z_scale: 1 # Z axis rotation scaling
+
+# FT sensor settings
+ft_sensor:
+  rate_hz: 200.0
+  buffer_length: 100  # FT_RING_LEN
+  obs_horizon: 8  # FT_OBS_HORIZON
+  # low freq FT
+  # obs_horizon: 2
+  calibration_samples: 200
+
+# Gravity compensator (mass/com and constants)
+gravity_compensator:
+  mass_for_x: 0.73
+  mass_for_y: 0.73
+  mass_for_z: 0.73
+  com_ft: [0.0, 0.01, 0.03]
+  g_const: 9.81
+  warmup_sec: 5.0
+
+# Gripper control
+gripper:
+  history_length: 10
+  close_threshold: 0.2  # predicted < 0.1 for close signal
+  open_threshold: 0.9   # predicted >= 0.9 for open signal
+  close_count_threshold: 3  # minimum close signals in history
+  open_count_threshold: 4   # minimum open signals in history
+  http_port: 5000
+
+# Model settings
+model:
+  num_inference_steps: 16  # DDIM inference iterations
+
+# Coordinate transformation matrix
+coordinate_transform:
+  # R_mat: [
+  #   [0, -1, 0],
+  #   [1, 0, 0],
+  #   [0, 0, -1]
+  # ]
+
+  R_mat_pos : [
+          [0, 1, 0],
+          [1, 0, 0],
+          [0, 0, -1]
+  ]
+
+  # 회전 매핑: 오른손 좌표계를 유지하는 정규 회전(det=+1)
+  # z축 반전 없이 xy 교환(+90deg z-회전)
+  R_mat_rot : [
+          [0, 1, 0],
+          [-1, 0, 0],
+          [0, 0, 1]
+  ]
+
+
+# Visualization
+visualization:
+  camera_index: 0
+
+# File paths (will be overridden by command line arguments)
+paths:
+  output_video: 'output.mp4'
+  
+  # Best
+  model_checkpoint: "/media/ailab-2204/research/vc_umi/complete/battery_disassem/dv3_mv3-256x256-p768-CA-par_frozen-dinov2-B_transformer-dp_ods2_battery-tool/checkpoints/epoch=0299-val_action_error=0.00000.ckpt"
+
+  # Img only
+  # model_checkpoint: "/media/ailab-2204/research/vc_umi/ongoing/baseline_dv3_mv3-256x256-p768-img-only_frozen-dinov2-B_transformer-dp_ods2_battery-tool/checkpoints/epoch=0199-val_action_error=0.00000.ckpt"
+

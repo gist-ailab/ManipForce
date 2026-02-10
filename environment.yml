@@ -3,6 +3,7 @@ channels:
   - conda-forge
   - pkgs/main
   - pytorch
+  - nvidia
 dependencies:
   - accelerate
   - diffusers
@@ -37,4 +38,4 @@ dependencies:
     - trampoline==0.1.2
     - umf==1.0.3
 
-prefix: "/home/ailab/miniconda3/envs/manipforce"
+
