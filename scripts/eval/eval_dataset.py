@@ -22,8 +22,8 @@ from scipy.spatial.transform import Slerp
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.common.pytorch_util import dict_apply
-from umi.real_world.real_inference_util import (get_real_gumi_obs_dict,
-                                              get_real_gumi_action)
+from utils.real_inference_util import (get_real_gumi_obs_dict,
+                                       get_real_gumi_action)
 from diffusion_policy.dataset.gumi_dataset_w_ft import GumiDatasetWithFT
 from torch.utils.data import DataLoader
 

@@ -19,7 +19,7 @@ import tty
 import select
 import threading
 from collections import deque
-from franka_api import FrankaAPI
+from utils.franka_api import FrankaAPI
 
 
 class FTCollector:

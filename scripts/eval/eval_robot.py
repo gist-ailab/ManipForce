@@ -27,26 +27,27 @@ import requests  # HTTP API 호출용 추가
 import torch
 import dill
 import hydra.utils
+from omegaconf import OmegaConf, DictConfig, ListConfig
 
 from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
 from diffusion_policy.common.replay_buffer import ReplayBuffer
 
 from diffusion_policy.common.pytorch_util import dict_apply
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
-from umi.common.precise_sleep import precise_wait
+from utils.precise_sleep import precise_wait
 
 from diffusion_policy.common.pytorch_util import dict_apply
-from umi.real_world.real_inference_util import (get_real_obs_resolution,
-                                                get_real_gumi_obs_dict,
-                                                get_real_gumi_action,
-                                                convert_action_10d_to_8d)
+from utils.real_inference_util import (get_real_obs_resolution,
+                                       get_real_gumi_obs_dict,
+                                       get_real_gumi_action,
+                                       convert_action_10d_to_8d)
 
 from utils.rs_capture import RSCapture
 from utils.ft_capture import AidinFTSensorUDP
 from utils.gravity_compensation_utils import GravityCompensator
 import pyrealsense2 as rs
 from PIL import Image
-from franka_api import FrankaAPI
+from utils.franka_api import FrankaAPI
 from collections import deque
 import threading, time, numpy as np
 
@@ -173,18 +174,22 @@ def smart_gripper_control(predicted_gripper, franka_api, server_ip):
         return 'keep'
 
 def _read_two_cams() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    ok1, f1 = camera.read()                # <-- 본인의 camera 객체
-    ok2, f2 = additional_cam.read()        # <-- 본인의 additional_cam
+    ok1, res1 = camera.read()                # <-- 본인의 camera 객체
+    ok2, res2 = additional_cam.read()        # <-- 본인의 additional_cam
     if not ok1:
         raise RuntimeError("메인 카메라 read 실패")
+        
+    f1 = res1[0] # (frame, display, acq_time) 중 frame 획득
     if not ok2:
         f2 = np.zeros_like(f1)
+    else:
+        f2 = res2[0]
     
     # BGR → RGB 변환 (학습 데이터와 일치시키기 위해)
     f1_rgb = cv2.cvtColor(f1, cv2.COLOR_BGR2RGB)
     f2_rgb = cv2.cvtColor(f2, cv2.COLOR_BGR2RGB)
     
-    return f1_rgb, f2_rgb, f1, f2  # RGB (모델용), BGR (시각화용)             
+    return f1_rgb, f2_rgb, f1, f2  # RGB (모델용), BGR (시각화용)
 class FTCollector:
     """Collect FT from Aidin UDP sensor and apply IMU-based gravity compensation in a background thread."""
     def __init__(self, ft_reader, imu_pipe, gravity_compensator, rate_hz=200, buf_len=200):
@@ -432,7 +437,7 @@ def connect_to_server(host='localhost', port=4999, timeout=5):
             continue
 
 def check_keyboard_input():
-    """비차단 방식으로 키보드 입력 확인 (터미널 + OpenCV 창)"""
+    """비차단 방식으로 키보드 입력 확인 (OpenCV 창에서만)"""
     # OpenCV 창에서 키 입력 확인 (1ms 대기)
     key = cv2.waitKey(1) & 0xFF
     
@@ -451,11 +456,6 @@ def check_keyboard_input():
             return '2'
         elif key == ord('0'):  # 0
             return '0'
-    
-    # 터미널에서도 키 입력 확인 (기존 방식)
-    if select.select([sys.stdin], [], [], 0)[0]:
-        key = sys.stdin.read(1)
-        return key
     
     return None
 
@@ -741,13 +741,6 @@ def main(config_path, model_checkpoint_path):
     ft_reader = AidinFTSensorUDP(ft_ip, ft_port)
     ft_reader.start()
 
-    # Initialize IMU pipeline (RealSense)
-    imu_pipe = rs.pipeline()
-    imu_cfg = rs.config()
-    imu_cfg.enable_stream(rs.stream.accel)
-    imu_cfg.enable_stream(rs.stream.gyro)
-    imu_pipe.start(imu_cfg)
-
     # Gravity compensator (configurable, with sensible defaults)
     gravity_compensator = GravityCompensator(
         mass_for_x=config['gravity_compensator']['mass_for_x'],
@@ -755,15 +748,6 @@ def main(config_path, model_checkpoint_path):
         mass_for_z=config['gravity_compensator']['mass_for_z'],
         com_ft=np.array(config['gravity_compensator']['com_ft']),
         g_const=config['gravity_compensator']['g_const']
-    )
-
-    # FT collector using Aidin + IMU gravity compensation
-    ft_collector = FTCollector(
-        ft_reader=ft_reader,
-        imu_pipe=imu_pipe,
-        gravity_compensator=gravity_compensator,
-        rate_hz=config['ft_sensor']['rate_hz'],
-        buf_len=config['ft_sensor']['buffer_length']
     )
     
     # === 현재 로봇 자세 출력 ===
@@ -820,6 +804,7 @@ def main(config_path, model_checkpoint_path):
 
     # Set camera
     global camera  # 전역 변수로 선언
+    print(f"카메라 초기화 중 (Serial: {config['camera']['main_camera']['serial_number']})...")
     camera = RSCapture(
         name=config['camera']['main_camera']['name'],
         serial_number=config['camera']['main_camera']['serial_number'],
@@ -829,6 +814,7 @@ def main(config_path, model_checkpoint_path):
     )
 
     global additional_cam
+    print(f"추가 카메라 초기화 중 (Serial: {config['camera']['additional_camera']['serial_number']})...")
     additional_cam = RSCapture(
         name=config['camera']['additional_camera']['name'],
         serial_number=config['camera']['additional_camera']['serial_number'],
@@ -837,12 +823,46 @@ def main(config_path, model_checkpoint_path):
         depth=False
     )
 
+    # Initialize IMU pipeline (RealSense)
+    print("IMU 파이프라인 초기화 중...")
+    imu_pipe = rs.pipeline()
+    imu_cfg = rs.config()
+    # imu_cfg.enable_device(config['camera']['main_camera']['serial_number']) # 특정 장치 지정 시도
+    imu_cfg.enable_stream(rs.stream.accel)
+    imu_cfg.enable_stream(rs.stream.gyro)
+    try:
+        imu_pipe.start(imu_cfg)
+    except Exception as e:
+        print(f"IMU 초기화 실패 (무시하고 진행): {e}")
+        imu_pipe = None
+
+    # FT collector using Aidin + IMU gravity compensation
+    ft_collector = FTCollector(
+        ft_reader=ft_reader,
+        imu_pipe=imu_pipe,
+        gravity_compensator=gravity_compensator,
+        rate_hz=config['ft_sensor']['rate_hz'],
+        buf_len=config['ft_sensor']['buffer_length']
+    )
+
     # 서버 연결
     client_socket = connect_to_server(server_ip, server_port)
     if client_socket is None:
         return
 
     with SharedMemoryManager() as shm_manager:
+        # OpenCV GUI 백엔드를 먼저 초기화 (SpaceMouse와의 충돌 방지)
+        print("[DEBUG] OpenCV GUI 백엔드 사전 초기화 중...")
+        try:
+            dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+            cv2.imshow('Initializing...', dummy_img)
+            cv2.waitKey(1)
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)  # 창이 완전히 닫힐 때까지 대기
+            print("[DEBUG] OpenCV GUI 백엔드 초기화 완료")
+        except Exception as e:
+            print(f"[WARNING] OpenCV GUI 사전 초기화 실패: {e}")
+        
         with Spacemouse(shm_manager=shm_manager) as sm:
             # 터미널 설정 저장
             old_settings = termios.tcgetattr(sys.stdin)
@@ -858,7 +878,38 @@ def main(config_path, model_checkpoint_path):
             payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
             cfg = payload['cfg']
             cfg.policy.obs_encoder.pretrained = False # pretrained 설정 추가
-            cls = hydra.utils.get_class(cfg._target_)
+            
+            def patch_config(config):
+                if isinstance(config, (dict, DictConfig)):
+                    # Use keys() to safely iterate and modify
+                    for k in config.keys():
+                        v = config[k]
+                        if k == '_target_' and isinstance(v, str):
+                            new_v = None
+                            if 'train_diffusion_unet_image_workspace' in v:
+                                new_v = 'diffusion_policy.workspace.train_manipforce_workspace.TrainManipForceWorkspace'
+                            elif 'timm_obs_encoder' in v or 'TimmObsEncoder' in v:
+                                new_v = 'diffusion_policy.model.vision.fmt_obs_encoder.FMTObsEncoder'
+                            elif 'diffusion_transformer_timm_policy' in v:
+                                new_v = 'diffusion_policy.policy.diffusion_transformer_timm_policy.DiffusionTransformerTimmPolicy'
+                            
+                            if new_v and new_v != v:
+                                print(f"[Patch] Changing {v} -> {new_v}")
+                                config[k] = new_v
+                        else:
+                            patch_config(v)
+                elif isinstance(config, (list, ListConfig)):
+                    for item in config:
+                        patch_config(item)
+
+            # Apply patching to the entire config
+            patch_config(cfg)
+            
+            try:
+                cls = hydra.utils.get_class(cfg._target_)
+            except (ImportError, AttributeError):
+                from diffusion_policy.workspace.train_manipforce_workspace import TrainManipForceWorkspace
+                cls = TrainManipForceWorkspace
             
             workspace = cls(cfg)
             workspace: BaseWorkspace
@@ -927,9 +978,17 @@ def main(config_path, model_checkpoint_path):
                 
                 mode = 'teleop' if mode == 't' else 'policy'
                 print(f"\n{mode} 모드를 시작합니다...")
+                print("[INFO] 키 입력은 OpenCV 창에 포커스를 맞춘 후 사용하세요 (t/p/r/q)")
                 
-                # 이제 제어를 위해 raw 모드로 전환
-                tty.setraw(sys.stdin.fileno())               
+                # OpenCV GUI 백엔드 초기화
+                try:
+                    cv2.startWindowThread()
+                    print("[DEBUG] cv2.startWindowThread() 호출 성공")
+                except Exception as e:
+                    print(f"[WARNING] cv2.startWindowThread() 실패: {e}")
+                
+                # OpenCV 창은 첫 imshow 호출 시 자동 생성됨
+                # Raw 모드는 cv2.waitKey와 충돌하므로 사용하지 않음
                 
                 iter_idx = 0
                 
@@ -1011,6 +1070,9 @@ def main(config_path, model_checkpoint_path):
                         
                         # 카메라 영상 가져오기 및 시각화
                         f1_rgb, f2_rgb, f1_bgr, f2_bgr = _read_two_cams()
+                        if iter_idx % 50 == 0:
+                            print(f"\r[Teleop] Frame received. f1 shape: {f1_bgr.shape}", end='', flush=True)
+       
                         
                         # 원본 크기 유지하되 패딩으로 높이를 맞춤
                         h1, w1 = f1_bgr.shape[:2]
@@ -1052,8 +1114,16 @@ def main(config_path, model_checkpoint_path):
                         # 이미지와 텍스트 합치기
                         combined_img = np.vstack([vis_img_resized, text_img])
 
+                        
                         # 이미지 제목과 함께 표시
-                        cv2.imshow('Camera 1 | Camera 2', combined_img)
+                        win_name = 'Camera 1 | Camera 2'
+                        try:
+                            cv2.imshow(win_name, combined_img)
+                        except Exception as e:
+                            if iter_idx == 0:
+                                print(f"[ERROR] cv2.imshow failed: {e}")
+                                print("[INFO] 시각화 없이 계속합니다...")
+                        # cv2.waitKey는 check_keyboard_input()에서 호출됨
 
                         # 데이터 전송
                         try:
@@ -1098,6 +1168,40 @@ def main(config_path, model_checkpoint_path):
                         
                         # policy.reset()
                         obs_np, img1, img2, ft_now, img1_view, img2_view, ft_ts = get_obs(ft_collector, last_executed_action)   # img1/img2: BGR uint8
+                        
+                        # Policy 실행 중에도 키 입력 체크 (리셋 응답성 향상)
+                        key_during_policy = check_keyboard_input()
+                        if key_during_policy:
+                            if key_during_policy == 'q':
+                                print("\n프로그램 종료")
+                                break
+                            elif key_during_policy == 't':
+                                mode = 'teleop'
+                                print("\n텔레오퍼레이션 모드로 전환")
+                                if hasattr(policy, '_init_done'):
+                                    delattr(policy, '_init_done')
+                                prev_target_pose = initial_pose.copy()
+                                continue
+                            elif key_during_policy == 'r':
+                                print("\n초기 위치로 리셋")
+                                prev_target_pose = initial_pose.copy()
+                                # 리셋 명령 전송
+                                try:
+                                    data = {
+                                        'target_pose': initial_pose.tolist(),
+                                        'timestamp': time.time(),
+                                        'gripper_command': 'keep',
+                                        'reset': True
+                                    }
+                                    message = json.dumps(data, separators=(',', ':'))
+                                    client_socket.sendall(message.encode('utf-8') + b'\n')
+                                    time.sleep(0.5)
+                                except (socket.error, BrokenPipeError) as e:
+                                    print(f"\n리셋 명령 전송 실패: {e}")
+                                # policy 재초기화
+                                if hasattr(policy, '_init_done'):
+                                    delattr(policy, '_init_done')
+                                continue
                         
                         # 현재 로봇 상태 가져오기
                         current_ee_pose = franka_api.get_pose_sync()
@@ -1160,10 +1264,6 @@ def main(config_path, model_checkpoint_path):
                             policy._last_action = action_8d.copy()
                             
                             transformed_action = transform_pose(action_8d, current_ee_pose, ft_now)
-                            
-                            # # 그리퍼 상태 추출 (action_8d의 마지막 요소)
-                            # predicted_gripper = float(action_8d[7])
-                            # gripper_state = smart_gripper_control(predicted_gripper, franka_api, server_ip)
                             
                             # gripper는 항상 keep으로 고정
                             gripper_state = 'keep'
@@ -1283,7 +1383,9 @@ def main(config_path, model_checkpoint_path):
                             combined_img = np.vstack([vis_img_resized, text_img])
 
                             # 이미지 제목과 함께 표시
-                            cv2.imshow('Camera 1 | Camera 2', combined_img)
+                            win_name = 'Camera 1 | Camera 2'
+                            cv2.imshow(win_name, combined_img)
+                            cv2.waitKey(1)
 
                     cycle_end = cycle_start + dt
                     sleep_time = cycle_end - time.monotonic()
@@ -1293,8 +1395,8 @@ def main(config_path, model_checkpoint_path):
                     iter_idx += 1
 
             finally:
-                # 터미널 설정 복원
-                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+                # 터미널 설정 복원 (raw 모드 사용 안 함)
+                # termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
                 try:
                     ft_collector.stop()
                 except Exception:

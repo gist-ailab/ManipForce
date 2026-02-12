@@ -14,10 +14,7 @@ from datetime import datetime
 import time
 import numpy as np
 import queue
-import json
 import threading
-from scipy.spatial.transform import Rotation as R
-from scipy.signal import butter, lfilter
 from collections import deque
 import pyrealsense2 as rs
 from ahrs.filters import Madgwick
@@ -213,8 +210,6 @@ def start_new_episode():
                                bar_format='{desc} |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]', 
                                ncols=85, leave=True)
     
-    # date_str = datetime.now().strftime("%m%d")
-    # episode_dir = os.path.join(base_save_path, date_str, f'episode_{episode_num}')
     episode_dir = os.path.join(base_save_path, f'episode_{episode_num}')
     
     # 디렉토리가 이미 존재하는 경우 처리
@@ -525,7 +520,7 @@ if use_additional_cam:
 
 # ====== FT 센서 시작 ======
 # ft_reader = FT300Reader('/dev/ttyUSB0', 19200)  # 기존 시리얼 방식
-ft_reader = AidinFTSensorUDP('172.27.190.4', 8890)  # 새로운 UDP 방식
+ft_reader = AidinFTSensorUDP('172.27.190.4', 8999)  # 새로운 UDP 방식
 ft_reader.start()
 
 # FT 센서 연결 확인 로직 (Dummy 모드 전환 지원)

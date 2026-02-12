@@ -186,7 +186,7 @@ if __name__ == "__main__":
     # FT 센서 테스트
     with AidinFTSensorUDP(
         sensor_ip='172.27.190.4', 
-        sensor_port=8890
+        sensor_port=8890 #8890, 50000
     ) as ft_sensor:
         if ft_sensor.connected:
             print("연결 성공! 스트리밍 시작...")

@@ -16,7 +16,7 @@ import tty
 import select
 import threading
 from collections import deque
-from franka_api import FrankaAPI
+from utils.franka_api import FrankaAPI
 import rospy
 from std_msgs.msg import Float64MultiArray
 
