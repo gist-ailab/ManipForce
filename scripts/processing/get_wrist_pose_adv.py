@@ -562,7 +562,6 @@ def process_images_from_directory(image_dir, output_json_path, visualize=False):
     T_cam_to_cube_initial = None
     
     # DJI 액션캠 내적 파라미터 사용 (체스보드 캘리브레이션 결과)
-    # 기본 경로: calibration/calibration_dji_intrinsics.json
     K_azure, D_azure = load_dji_intrinsics("calibration/calibration_dji_intrinsics.json")
     
     # For handeye (Realsense) camera

@@ -36,6 +36,7 @@ if __name__ == '__main__':
                        help='RealSense 대신 FT 내장 IMU를 사용해 중력 보상 (실험용)')
     parser.add_argument('--global_top_setup', action='store_true',
                        help='GlobalTop 세팅 파라미터 사용 (Gumi 기본과 동일 질량/COM)')
+    parser.add_argument('--port', type=int, default=50000, help='FT 센서 포트')
     args = parser.parse_args()
     
     print("프로그램 시작")
@@ -48,7 +49,9 @@ if __name__ == '__main__':
 
     # ====== FT 센서 시작 ======
     print("FT 센서 초기화 중...")
-    ft_reader = AidinFTSensorUDP('172.27.190.4', 8890)
+    # 8890, 50000
+    port = args.port
+    ft_reader = AidinFTSensorUDP('172.27.190.4', port)
     ft_reader.start()
     print("FT 센서 초기화 완료")
 

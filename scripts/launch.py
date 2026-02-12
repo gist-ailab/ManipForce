@@ -11,6 +11,7 @@ def main():
     # Predefined dataset paths
     dataset_path_dict = {
         'lanport': '../../dset/manipforce_dataset/LAN_Insertion_0830.zarr',
+        'gear': '/home/ailab-2204/Workspace/ManipForce/data/gear_assem.zarr',
     }
 
     if args.dataset not in dataset_path_dict:

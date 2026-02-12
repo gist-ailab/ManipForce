@@ -149,10 +149,10 @@ class AidinFTSensorUDP:
             
             # 0 대신 sensor_port(8890)로 바인딩하여 특정 포트로 들어오는 데이터 수신
             try:
-                self.socket.bind(('', self.sensor_port))
-                print(f"[Aidin FT Debug] 로컬 포트 {self.sensor_port}에 바인딩 성공")
+                self.socket.bind(('', 0))
+                print(f"[Aidin FT Debug] 로컬 포트 {self.socket.getsockname()[1]}에 바인딩 성공")
             except Exception as e:
-                print(f"[Aidin FT Debug] 포트 {self.sensor_port} 바인딩 실패 ({e}), 임의 포트 사용")
+                print(f"[Aidin FT Debug] 바인딩 실패 ({e})")
                 self.socket.bind(('', 0))
                 
             self.connected = True
@@ -164,7 +164,7 @@ class AidinFTSensorUDP:
             
             # 바이어스 모드 실행
             self.bias_mode()
-            time.sleep(0.2)
+            time.sleep(1.0)
             
             # 전송 모드 시작
             if self.start_transmit():

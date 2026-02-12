@@ -22,9 +22,9 @@ import threading
 
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.common.pytorch_util import dict_apply
-from umi.real_world.real_inference_util import (get_real_gumi_obs_dict,
-                                              get_real_gumi_action)
-from franka_api import FrankaAPI
+from utils.real_inference_util import (get_real_gumi_obs_dict,
+                                       get_real_gumi_action)
+from utils.franka_api import FrankaAPI
 
 # 전역 변수 선언
 prev_frames = []
