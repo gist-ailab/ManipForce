@@ -4,7 +4,7 @@ conda activate gumi
 # ------------------------------------------------------------
 
 # Step1 : Capture Multimodal Data
-python scripts/collection/capture_multimodal_data_adv.py --data_path data/gear_assem --add_cam
+python scripts/collection/capture_multimodal_data_adv.py --data_path data/gear_assem --add_cam --ft_port 50000
 python scripts/collection/capture_multimodal_data_adv.py --data_path data/battery_assem --add_cam
 
 # Step2 : Synchronize Images
@@ -15,10 +15,10 @@ python scripts/collection/align_multimodal_data.py --data_path data/battery_asse
 python scripts/collection/verify_sync_interactive.py --episode_path data/gear_assem/episode_1 --synced --add_cam
 
 # Step3 : Estimate Marker Pose
-python scripts/processing/get_wrist_pose_adv.py --data_path data/battery_assem --visualize
+python scripts/processing/get_wrist_pose_adv.py --data_path data/gear_assem --visualize
 
 # Step4 : Filtering and Interpolation
-python scripts/processing/pose_refinement.py --data_path data/battery_assem
+python scripts/processing/pose_refinement.py --data_path data/gear_assem
 
 # Check Data (Option)
 python scripts/processing/check_data.py --data_path data/gear_assem/episode_1

@@ -17,14 +17,13 @@ camera:
 robot:
   server_ip: '172.27.190.125'
   server_port: 4999
-  initial_pose: [0.48, 0.01, -0.05, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
-  random_pos_range: 0.02
+  initial_pose: [0.575, -0.065, 0.09, 0.9907264, -0.021747975, 0.13380258, -0.009225016] # [x, y, z, qw, qx, qy, qz]
+  random_pos_range: 0.01
 
   max_pos_speed: 0.7  # m/s
   max_rot_speed: 0.7  # rad/s
   initial_tilt_axis: 'y'
-  initial_tilt_deg: 0.0
-
+  initial_tilt_deg: 20
 # Control parameters
 control:
   frequency: 200.0  # Hz
@@ -38,10 +37,17 @@ image:
 
 # Action processing
 action:
-  position_xy_scale: 3 # image only 0.5, lowdim 0.1
-  position_z_scale: 3 # image only 0.5, lowdim 0.1
-  rotation_xy_scale: 2  # X,Y axis rotation scaling
-  rotation_z_scale: 2 # Z axis rotation scaling
+  position_x_scale: 1 # image only 0.5, lowdim 0.1
+  position_y_scale: 0.5
+  position_z_scale: 1 # image only 0.5, lowdim 0.1
+  rotation_x_scale: 1 # X,Y axis rotation scaling
+  rotation_y_scale: 0.1
+  rotation_z_scale: 0.1 # Z axis rotation scaling
+
+  # position_xy_scale: 1 # image only 0.5, lowdim 0.1
+  # position_z_scale: 1 # image only 0.5, lowdim 0.1
+  # rotation_xy_scale: 1  # X,Y axis rotation scaling
+  # rotation_z_scale: 1 # Z axis rotation scaling
 
 # FT sensor settings
 ft_sensor:
@@ -49,7 +55,7 @@ ft_sensor:
   buffer_length: 100  # FT_RING_LEN
   obs_horizon: 8  # FT_OBS_HORIZON
   # low freq FT
-  # obs_horizon: 3
+  # obs_horizon: 2
   calibration_samples: 200
 
 # Gravity compensator (mass/com and constants)
@@ -63,7 +69,7 @@ gravity_compensator:
 
 # Gripper control
 gripper:
-  history_length: 5
+  history_length: 10
   close_threshold: 0.2  # predicted < 0.1 for close signal
   open_threshold: 0.9   # predicted >= 0.9 for open signal
   close_count_threshold: 3  # minimum close signals in history
@@ -76,6 +82,12 @@ model:
 
 # Coordinate transformation matrix
 coordinate_transform:
+  # R_mat: [
+  #   [0, -1, 0],
+  #   [1, 0, 0],
+  #   [0, 0, -1]
+  # ]
+
   R_mat_pos : [
           [0, 1, 0],
           [1, 0, 0],
@@ -100,4 +112,7 @@ paths:
   output_video: 'output.mp4'
   
   # Best
-  model_checkpoint: "/home/ailab-2204/Workspace/ManipForce/outputs/gear_ods3_gear/checkpoints/epoch=0449-val_action_error=0.00069.ckpt"
+  model_checkpoint: "/media/ailab-2204/research/vc_umi/complete/battery_assem/dv3_mv3-256x256-p768-CA-par_frozen-dinov2-B_transformer-dp_ods2_keyboard/checkpoints/epoch=0349-val_action_error=0.00000.ckpt"
+
+  # img only
+  # model_checkpoint: "/media/ailab-2204/research/vc_umi/ongoing/baseline_dv3_mv3-256x256-p768-img-only_frozen-dinov2-B_transformer-dp_ods2_keyboard/checkpoints/epoch=0349-val_action_error=0.00001.ckpt"
