@@ -31,6 +31,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data_path', type=str, default='data', help='저장할 base 폴더명')
 parser.add_argument('--add_cam', action='store_true', help='추가 카메라 사용 활성화')
 parser.add_argument('--dji_device', type=str, default=None, help='DJI 액션캠이 연결된 /dev/video 경로')
+parser.add_argument('--ft_ip', type=str, default='172.27.190.4', help='FT 센서 UDP IP 주소')
+parser.add_argument('--ft_port', type=int, default=50000, help='FT 센서 UDP 포트 번호')
 args = parser.parse_args()
 base_save_path = args.data_path
 saving_images = False
@@ -520,7 +522,7 @@ if use_additional_cam:
 
 # ====== FT 센서 시작 ======
 # ft_reader = FT300Reader('/dev/ttyUSB0', 19200)  # 기존 시리얼 방식
-ft_reader = AidinFTSensorUDP('172.27.190.4', 8999)  # 새로운 UDP 방식
+ft_reader = AidinFTSensorUDP(args.ft_ip, args.ft_port)  # 새로운 UDP 방식
 ft_reader.start()
 
 # FT 센서 연결 확인 로직 (Dummy 모드 전환 지원)

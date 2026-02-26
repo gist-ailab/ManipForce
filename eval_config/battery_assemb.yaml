@@ -17,7 +17,7 @@ camera:
 robot:
   server_ip: '172.27.190.125'
   server_port: 4999
-  initial_pose: [0.575, -0.065, 0.09, 0.9907264, -0.021747975, 0.13380258, -0.009225016] # [x, y, z, qw, qx, qy, qz]
+  initial_pose: [0.54, 0.02, -0.13, 0.9907264, -0.021747975, 0.13380258, -0.009225016] # [x, y, z, qw, qx, qy, qz]
   random_pos_range: 0.01
 
   max_pos_speed: 0.7  # m/s
@@ -38,24 +38,17 @@ image:
 # Action processing
 action:
   position_x_scale: 1 # image only 0.5, lowdim 0.1
-  position_y_scale: 0.5
+  position_y_scale: 1
   position_z_scale: 1 # image only 0.5, lowdim 0.1
   rotation_x_scale: 1 # X,Y axis rotation scaling
-  rotation_y_scale: 0.1
-  rotation_z_scale: 0.1 # Z axis rotation scaling
-
-  # position_xy_scale: 1 # image only 0.5, lowdim 0.1
-  # position_z_scale: 1 # image only 0.5, lowdim 0.1
-  # rotation_xy_scale: 1  # X,Y axis rotation scaling
-  # rotation_z_scale: 1 # Z axis rotation scaling
+  rotation_y_scale: 1
+  rotation_z_scale: 1 # Z axis rotation scaling
 
 # FT sensor settings
 ft_sensor:
   rate_hz: 200.0
   buffer_length: 100  # FT_RING_LEN
   obs_horizon: 8  # FT_OBS_HORIZON
-  # low freq FT
-  # obs_horizon: 2
   calibration_samples: 200
 
 # Gravity compensator (mass/com and constants)
@@ -82,12 +75,6 @@ model:
 
 # Coordinate transformation matrix
 coordinate_transform:
-  # R_mat: [
-  #   [0, -1, 0],
-  #   [1, 0, 0],
-  #   [0, 0, -1]
-  # ]
-
   R_mat_pos : [
           [0, 1, 0],
           [1, 0, 0],
@@ -112,7 +99,4 @@ paths:
   output_video: 'output.mp4'
   
   # Best
-  model_checkpoint: "/media/ailab-2204/research/vc_umi/complete/battery_assem/dv3_mv3-256x256-p768-CA-par_frozen-dinov2-B_transformer-dp_ods2_keyboard/checkpoints/epoch=0349-val_action_error=0.00000.ckpt"
-
-  # img only
-  # model_checkpoint: "/media/ailab-2204/research/vc_umi/ongoing/baseline_dv3_mv3-256x256-p768-img-only_frozen-dinov2-B_transformer-dp_ods2_keyboard/checkpoints/epoch=0349-val_action_error=0.00001.ckpt"
+  model_checkpoint: "/home/ailab-2204/Workspace/ManipForce/outputs/battery_ods2/checkpoints/epoch=0299-val_action_error=0.00000.ckpt"

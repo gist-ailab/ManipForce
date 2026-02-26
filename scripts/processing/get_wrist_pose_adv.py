@@ -725,18 +725,24 @@ def main():
     
     start_time = time.time()
     
+    skipped_count = 0
     for episode_dir in episode_dirs:
-        print(f"\nProcessing {episode_dir}...")
         episode_path = os.path.join(base_path, episode_dir)
         image_directory = os.path.join(episode_path, 'images', 'pose_tracking')
         output_json = os.path.join(episode_path, 'raw_pose.json')
         if not os.path.exists(image_directory):
             print(f"Skipping {episode_dir}: Image directory not found")
             continue
-            
+        if os.path.exists(output_json):
+            skipped_count += 1
+            continue
+
+        print(f"\nProcessing {episode_dir}...")
         process_images_from_directory(image_directory, output_json, visualize=args.visualize)
     
     elapsed_time = time.time() - start_time
+    if skipped_count > 0:
+        print(f"\nSkipped {skipped_count} episodes (raw_pose.json already exists)")
     print(f"\n🎯 Processing completed!")
     print(f"Total time: {elapsed_time:.1f} seconds")
 

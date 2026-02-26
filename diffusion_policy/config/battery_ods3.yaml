@@ -1,8 +1,8 @@
 defaults:
-  - task: gear_assembly
+  - task: battery_assembly
   - _self_
 
-name: gear_assembly_ods3
+name: battery_assembly_ods3
 _target_: diffusion_policy.workspace.train_manipforce_workspace.TrainManipForceWorkspace
 
 task_name: ${task.name}

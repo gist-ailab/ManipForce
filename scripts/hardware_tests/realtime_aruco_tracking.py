@@ -9,10 +9,12 @@ import numpy as np
 import json
 from scipy.spatial.transform import Rotation as R
 import time
-import glob
+
+from utils.rs_capture import DJICapture
 
 # ArUco 마커 설정
 dictionary = aruco.getPredefinedDictionary(aruco.DICT_6X6_100)
+T_cam_to_cube_initial = None
 
 def load_dji_intrinsics(json_path: str = "calibration/calibration_dji_intrinsics.json"):
     """
@@ -24,14 +26,6 @@ def load_dji_intrinsics(json_path: str = "calibration/calibration_dji_intrinsics
     K = np.array(data["K"], dtype=np.float32)
     dist = np.array(data["dist"], dtype=np.float32)
     return K, dist
-
-
-def find_first_video() -> str:
-    """가장 번호가 작은 /dev/video* 디바이스를 찾습니다."""
-    vids = sorted(glob.glob("/dev/video*"))
-    if not vids:
-        raise SystemExit("비디오 장치를 찾지 못했습니다.")
-    return vids[0]
 
 
 def reduce_overexposure(image_bgr: np.ndarray) -> np.ndarray:
@@ -299,49 +293,47 @@ def main():
     print("K:\n", K_cam)
     print("dist:", D_cam)
 
-    # 비디오 장치 열기 (/dev/video* 중 첫 번째)
-    device = find_first_video()
-    print(f"[INFO] Using video device: {device}")
-    cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
-    if not cap.isOpened():
-        print(f"[ERROR] 카메라를 열 수 없습니다: {device}")
-        return
-
-    # 내부 버퍼 줄이기 (지연 감소)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    # DJICapture로 카메라 열기 (자동으로 DJI 장치 탐색, MJPG 코덱, 720p 설정)
+    dji_cam = DJICapture(
+        name='realtime_tracking',
+        dim=(1280, 720),
+        fps=30,
+        zero_config=False
+    )
+    print(f"[INFO] DJI camera opened: {dji_cam.device}")
 
     while True:
-        ret2, frame2 = cap.read()
+        ok, result = dji_cam.read()
 
-        # 프레임이 유효하지 않으면 다음 루프로 진행
-        if not ret2 or frame2 is None or frame2.size == 0:
+        if not ok or result is None or result[0] is None:
             continue
 
+        frame = result[0]  # 원본 프레임
+
         # 하드웨어 제어 불가 시 소프트웨어로 과노출 완화
-        frame2 = reduce_overexposure(frame2)
+        frame = reduce_overexposure(frame)
 
         # 마커 감지 및 자세 추정
-        image_with_axes, aruco_pose = detect_markers_and_estimate_pose(frame2, K_cam, D_cam)
- 
+        image_with_axes, aruco_pose = detect_markers_and_estimate_pose(frame, K_cam, D_cam)
+
         # TCP 포즈 변환 및 두 좌표계 모두 표시
         if aruco_pose is not None:
             tcp_pose = transform_aruco_to_tcp(
                 aruco_pose,
-                tcp_offset=np.array([0.0, -0.13423, 0.135])  # 괄호 닫기 수정
+                tcp_offset=np.array([0.0, -0.13423, 0.135])
             )
-            
+
             # TCP 좌표계도 화면에 그리기
             tcp_rvec = cv2.Rodrigues(R.from_quat(tcp_pose['orientation']).as_matrix())[0]
             tcp_tvec = np.array(tcp_pose['position'])
-            cv2.drawFrameAxes(image_with_axes, K_cam, D_cam, tcp_rvec, tcp_tvec, 0.08)  # TCP는 좀 더 크게
+            cv2.drawFrameAxes(image_with_axes, K_cam, D_cam, tcp_rvec, tcp_tvec, 0.08)
 
-        # 두 영상을 가로로 합치기
         cv2.imshow('DJI Realtime ArUco Tracking', image_with_axes)
-        
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-     
-    cap.release()
+
+    dji_cam.close()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":

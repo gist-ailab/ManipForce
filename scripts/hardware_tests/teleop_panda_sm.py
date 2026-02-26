@@ -11,8 +11,8 @@ import cv2
 import numpy as np
 import scipy.spatial.transform as st
 import socket
-from diffusion_policy.real_world.spacemouse_shared_memory import Spacemouse
-from diffusion_policy.common.precise_sleep import precise_wait
+from utils.spacemouse_device import SpacemouseDevice as Spacemouse
+from utils.precise_sleep import precise_wait
 import sys
 import termios
 import tty
@@ -310,8 +310,8 @@ def check_keyboard_input():
 @click.option('--ft_filter_alpha', '-fa', default=0.3, type=float, help="FT 필터 강도 (0.1~0.5 권장, 작을수록 더 부드러움)")
 def main(frequency, command_latency, server_ip, server_port, save_ft, enable_ros, ft_filter_alpha):
     dt = 1 / frequency
-    max_pos_speed = 0.3  # m/s
-    max_rot_speed = 0.6  # rad/s
+    max_pos_speed = 0.1  # m/s
+    max_rot_speed = 0.3  # rad/s
     
     # 사전 계산된 상수
     pos_scale = max_pos_speed * dt
@@ -471,7 +471,7 @@ def main(frequency, command_latency, server_ip, server_port, save_ft, enable_ros
                             ft_collector.set_filter_alpha(new_alpha)
                             continue
                         elif key == '2' and (save_ft or enable_ros):
-                            # FT 필터 강도 감소 (더 민감하게)f
+                            # FT 필터 강도 감소 (더 민감하게)
                             new_alpha = min(0.9, ft_collector.filter_alpha + 0.05)
                             ft_collector.set_filter_alpha(new_alpha)
                             continue
