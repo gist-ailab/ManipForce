@@ -11,7 +11,7 @@ dependencies:
   - einops
   - hydra-core
   - imagecodecs
-  - numpy==1.23.5
+  - numpy==1.26.4
   - pandas
   - python=3.10
   - pytorch==2.1.0
@@ -37,6 +37,5 @@ dependencies:
     - torchsde==0.2.6
     - trampoline==0.1.2
     - umf==1.0.3
-    - opencv-contrib-python==4.7.0.72
 
 

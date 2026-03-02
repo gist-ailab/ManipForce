@@ -106,21 +106,9 @@ def transform_to_cube_center(marker_id, marker_pose):
     marker_pos = np.array(marker_pose['position'])
     marker_rot = R.from_quat(marker_pose['orientation']).as_matrix()
     
-    # 디버깅 출력: 입력 데이터
-    print(f"\n=== 마커 ID {marker_id} ===")
-    print(f"마커 위치 (입력): {marker_pos}")
-    print(f"마커 회전 행렬 (입력):\n{marker_rot}")
-    print(f"적용할 변환 Translation: {transform['translation']}")
-    print(f"적용할 변환 Rotation:\n{transform['rotation']}")
-    
     # 큐브 중심 기준 좌표계로 변환
     cube_rot = marker_rot @ transform['rotation']
     cube_pos = marker_pos + (marker_rot @ transform['translation'])
-    
-    
-    # 디버깅 출력: 출력 데이터
-    print(f"큐브 중심 위치 (출력): {cube_pos}")
-    print(f"큐브 중심 회전 행렬 (출력):\n{cube_rot}")
     
     return {
         'position': cube_pos,
@@ -132,94 +120,58 @@ def normalize_quaternion_sign(curr_quat, ref_quat):
         return -np.array(curr_quat)
     return np.array(curr_quat)
 
-def detect_markers_and_estimate_pose(image, K, D, prev_orientation=None):
-    global T_cam_to_cube_initial
+def low_pass_filter(new_value, prev_value, alpha=0.8):
+    if prev_value is None:
+        return new_value
+    return alpha * np.array(prev_value) + (1 - alpha) * np.array(new_value)
 
-    # 1) Fast coarse detection on a downscaled gray image (no refinement)
-    gray_full = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    scale = 0.4  # 더 작게 스케일링하여 속도 향상
-    gray = cv2.resize(gray_full, (0,0), fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+def detect_markers_and_estimate_pose(image, K, D):
+    # get_wrist_pose_adv.py와 동일한 단일 단계 검출 로직으로 정렬 (안정성 및 떨림 개선)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    parameters = aruco.DetectorParameters()
+    parameters.adaptiveThreshWinSizeMin = 5
+    parameters.adaptiveThreshWinSizeMax = 23
+    parameters.adaptiveThreshWinSizeStep = 4
+    parameters.adaptiveThreshConstant = 7
+    parameters.minMarkerPerimeterRate = 0.02
+    parameters.maxMarkerPerimeterRate = 0.4
+    parameters.polygonalApproxAccuracyRate = 0.005
+    parameters.minCornerDistanceRate = 0.05
+    parameters.minDistanceToBorder = 5
+    parameters.cornerRefinementMethod = aruco.CORNER_REFINE_APRILTAG
+    parameters.cornerRefinementWinSize = 2
+    parameters.cornerRefinementMaxIterations = 10
+    parameters.cornerRefinementMinAccuracy = 0.001
 
-    params = aruco.DetectorParameters()
-    # coarse settings - 더 빠른 검출을 위해 조정
-    params.adaptiveThreshWinSizeMin = 3
-    params.adaptiveThreshWinSizeMax = 15
-    params.adaptiveThreshWinSizeStep = 2
-    params.adaptiveThreshConstant = 7
-    params.minMarkerPerimeterRate = 0.03  # 조금 더 큰 마커만 검출
-    params.maxMarkerPerimeterRate = 0.5
-    # NO corner refinement here
-    params.cornerRefinementMethod = aruco.CORNER_REFINE_NONE
-
-    corners_coarse, ids, _ = aruco.detectMarkers(gray, dictionary, parameters=params)
+    corners, ids, _ = aruco.detectMarkers(gray, dictionary, parameters=parameters)
     if ids is None:
         return image, None
 
-    # 2) Upscale corner coordinates, crop tight ROIs and run APRILTAG refinement there
-    refined_corners = []
-    refined_ids     = []
-    for corner_small, mid in zip(corners_coarse, ids.flatten()):
-        # scale up to full res
-        corner = (corner_small.reshape(-1,2) / scale).astype(int)
-
-        # compute a tight bounding box + padding
-        x, y, w, h = cv2.boundingRect(corner)
-        pad = int(max(w,h)*0.3)
-        x0, y0 = max(x-pad,0), max(y-pad,0)
-        x1 = min(x+w+pad, image.shape[1])
-        y1 = min(y+h+pad, image.shape[0])
-        roi = gray_full[y0:y1, x0:x1]
-
-        # detect & refine corners inside ROI
-        params2 = aruco.DetectorParameters()
-        params2.cornerRefinementMethod      = aruco.CORNER_REFINE_APRILTAG
-        params2.cornerRefinementWinSize     = 3  # 더 작은 윈도우
-        params2.cornerRefinementMaxIterations = 15  # 더 적은 반복
-        params2.cornerRefinementMinAccuracy   = 0.01  # 더 낮은 정확도 허용
-
-        # shift ROI back to full-image coords
-        corners_refined, ids_r, _ = aruco.detectMarkers(roi, dictionary, parameters=params2)
-        if ids_r is None or mid not in ids_r:
-            continue
-        # pull out the one you want
-        idx = list(ids_r.flatten()).index(mid)
-        cr = corners_refined[idx].reshape(-1,2) + np.array([x0,y0])
-        refined_corners.append(cr)
-        refined_ids.append(mid)
-
-    if not refined_ids:
-        return image, None
-
-    # 3) Estimate pose from refined corners
-    cube_centers = []
+    # 마커 크기
     marker_size = 0.0483
     
-    # refined_corners를 올바른 형식으로 변환
-    corners_for_drawing = []
-    for corner in refined_corners:
-        # reshape to correct format (1,4,2) and convert to float32
-        corner_reshaped = corner.reshape(1,4,2).astype(np.float32)
-        corners_for_drawing.append(corner_reshaped)
-    
-    for corner, mid in zip(refined_corners, refined_ids):
+    cube_centers = []
+    for i in range(len(corners)):
+        marker_id = ids[i][0]
         # 그리퍼 마커(6, 7)는 큐브 마커가 아니므로 건너뛰기
-        if mid in [6, 7]:
+        if marker_id in [6, 7]:
             continue
             
-        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-            np.array([corner], dtype=np.float32), marker_size, K, D)
+        rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners[i:i+1], marker_size, K, D)
         Rcm, _ = cv2.Rodrigues(rvecs[0][0])
         mrk = {
             'position': tvecs[0][0],
             'orientation': R.from_matrix(Rcm).as_quat()
         }
-        cube = transform_to_cube_center(mid, mrk)
-        if cube: cube_centers.append(cube)
+        cube = transform_to_cube_center(marker_id, mrk)
+        if cube: 
+            cube_centers.append(cube)
 
     if not cube_centers:
         return image, None
 
-    # 4) Fuse and build your local-frame transform exactly as before
+    # 큐브 중심 융합 (다수 마커 평균)
     ref_q = cube_centers[0]['orientation']
     for c in cube_centers:
         c['orientation'] = normalize_quaternion_sign(c['orientation'], ref_q)
@@ -228,9 +180,10 @@ def detect_markers_and_estimate_pose(image, K, D, prev_orientation=None):
 
     pos_local = avg_p
     quat_local = avg_q
-    # 시각화 부분 수정
+    
+    # 시각화
     vis = image.copy()
-    vis = aruco.drawDetectedMarkers(vis, corners_for_drawing, np.array(refined_ids))
+    vis = aruco.drawDetectedMarkers(vis, corners, ids)
     rvec, _ = cv2.Rodrigues(R.from_quat(quat_local).as_matrix())
     tvec = pos_local
     cv2.drawFrameAxes(vis, K, D, rvec, tvec, 0.06)
@@ -298,9 +251,20 @@ def main():
         name='realtime_tracking',
         dim=(1280, 720),
         fps=30,
-        zero_config=False
+        zero_config=False,
+        threaded=True
     )
+    # GUI 초기화 (스레드 충돌 방지)
+    cv2.namedWindow('dummy')
+    cv2.waitKey(1)
+    cv2.destroyWindow('dummy')
+
     print(f"[INFO] DJI camera opened: {dji_cam.device}")
+
+    prev_pose = None
+    alpha = 0.3  # 더 낮게(0.3) 설정하여 반응성 극대화 (0.0=노필터, 1.0=강한필터)
+    fps_start_time = time.time()
+    fps_counter = 0
 
     while True:
         ok, result = dji_cam.read()
@@ -308,7 +272,7 @@ def main():
         if not ok or result is None or result[0] is None:
             continue
 
-        frame = result[0]  # 원본 프레임
+        frame = result[0].copy()  # 원본 프레임 (Thread-safe copy)
 
         # 하드웨어 제어 불가 시 소프트웨어로 과노출 완화
         frame = reduce_overexposure(frame)
@@ -318,6 +282,16 @@ def main():
 
         # TCP 포즈 변환 및 두 좌표계 모두 표시
         if aruco_pose is not None:
+            # 저역 통과 필터(LPF) 적용으로 떨림 완화
+            if prev_pose is not None:
+                # alpha가 작을수록 실시간 반응성이 좋아짐
+                aruco_pose['position'] = low_pass_filter(aruco_pose['position'], prev_pose['position'], alpha).tolist()
+                aruco_pose['orientation'] = normalize_quaternion_sign(aruco_pose['orientation'], prev_pose['orientation'])
+                aruco_pose['orientation'] = low_pass_filter(aruco_pose['orientation'], prev_pose['orientation'], alpha).tolist()
+                aruco_pose['orientation'] = (np.array(aruco_pose['orientation']) / np.linalg.norm(aruco_pose['orientation'])).tolist()
+            
+            prev_pose = aruco_pose
+
             tcp_pose = transform_aruco_to_tcp(
                 aruco_pose,
                 tcp_offset=np.array([0.0, -0.13423, 0.135])
@@ -329,6 +303,12 @@ def main():
             cv2.drawFrameAxes(image_with_axes, K_cam, D_cam, tcp_rvec, tcp_tvec, 0.08)
 
         cv2.imshow('DJI Realtime ArUco Tracking', image_with_axes)
+        
+        fps_counter += 1
+        if time.time() - fps_start_time >= 1.0:
+            print(f"[Loop] Processing FPS: {fps_counter}")
+            fps_counter = 0
+            fps_start_time = time.time()
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

@@ -1,46 +1,5 @@
-# import cv2
-# import cv2.aruco as aruco
-# import numpy as np
-
-# # A4 용지 크기 (픽셀 단위, 300 DPI 기준)
-# A4_WIDTH, A4_HEIGHT = 2480, 3508
-
-# # AprilTag 생성에 사용할 dictionary
-# dictionary = aruco.getPredefinedDictionary(aruco.DICT_APRILTAG_36h11)
-
-# # 마커 이미지 크기와 간격 설정
-# marker_size = 236   # 각 마커의 크기 (픽셀 단위, 약 2cm)
-# margin = 80  
-
-# # A4 용지 흰색 배경 생성
-# a4_image = np.ones((A4_HEIGHT, A4_WIDTH), dtype=np.uint8) * 255
-
-# # 4x4 마커 배열 생성
-# marker_id = 0
-# y_offset = margin
-# for row in range(4):  # 4행
-#     x_offset = margin
-#     for col in range(4):  # 4열
-#         # 마커 생성
-#         marker_image = aruco.drawMarker(dictionary, marker_id, marker_size)
-
-#         # A4 이미지에 마커 배치
-#         a4_image[y_offset:y_offset + marker_size, x_offset:x_offset + marker_size] = marker_image
-
-#         # 다음 마커 위치로 이동
-#         x_offset += marker_size + margin
-#         marker_id += 1
-
-#     y_offset += marker_size + margin
-
-# # 이미지 저장
-# cv2.imwrite("board_img/A4_with_16_apriltag_markers.png", a4_image)
-# print("3x3 AprilTag 마커가 배치된 A4 사이즈 마커 이미지가 생성되었습니다.")
-
-
 
 # Make cube
-
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
@@ -54,9 +13,6 @@ import os
 A4_WIDTH, A4_HEIGHT = 2480, 3508  # 210mm x 297mm @ 300DPI
 
 # 마커 설정
-# border_size_mm = 58  # 검은 테두리 4.5cm
-# marker_size_mm = 52  # 마커는 테두리보다 살짝 작게
-
 border_size_mm = 59  # 검은 테두리 4.5cm
 marker_size_mm = 53  # 마커는 테두리보다 살짝 작게
 
