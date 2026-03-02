@@ -418,6 +418,7 @@ class DJICapture:
         backend: int = cv2.CAP_V4L2,
         auto_start: bool = True,
         zero_config: bool = True,
+        threaded: bool = True,
     ):
         self.name = name
         self.backend = backend
@@ -425,6 +426,7 @@ class DJICapture:
         self.dim = dim
         self.fps = fps
         self.zero_config = zero_config
+        self.threaded = threaded
         self.cap: Optional[cv2.VideoCapture] = None
 
         # 스레드 관련 변수
@@ -518,10 +520,13 @@ class DJICapture:
                 print(f"[DJI] Zero-Config 모드 (드라이버 기본값 사용)")
 
         # 스레드 시작
-        self.running = True
-        self.thread = threading.Thread(target=self._update, daemon=True)
-        self.thread.start()
-        print(f"[DJI] 캡처 스레드 시작됨 (장치: {self.device})")
+        if self.threaded:
+            self.running = True
+            self.thread = threading.Thread(target=self._update, daemon=True)
+            self.thread.start()
+            print(f"[DJI] 캡처 스레드 시작됨 (장치: {self.device})")
+        else:
+            print(f"[DJI] Non-Threaded 모드 (장치: {self.device})")
         
         return self
 
@@ -561,21 +566,30 @@ class DJICapture:
             pass
 
     def read(self):
-        """가장 최신 프레임을 반환 (Non-blocking)"""
-        if not self.running:
-            return False, None
+        """프레임을 반환."""
+        if self.threaded:
+            if not self.running:
+                return False, None
 
-        with self.lock:
-            frame = self.latest_frame
-            acq_time = getattr(self, 'latest_acq_time', None)
-        
-        if frame is None:
-            return False, None
+            with self.lock:
+                frame = self.latest_frame
+                acq_time = getattr(self, 'latest_acq_time', None)
             
-        # 화면 표시용 리사이즈는 read() 시점에 수행 (Lazy resizing)
-        display = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_NEAREST)
-            
-        return True, (frame, display, acq_time)
+            if frame is None:
+                return False, None
+                
+            # 화면 표시용 리사이즈는 read() 시점에 수행 (Lazy resizing)
+            display = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_NEAREST)
+                
+            return True, (frame, display, acq_time)
+        else:
+            # Non-threaded: Blocking read
+            if self.cap is None: return False, None
+            ret, frame = self.cap.read()
+            if not ret: return False, None
+            acq_time = time.time()
+            display = cv2.resize(frame, (640, 360), interpolation=cv2.INTER_NEAREST)
+            return True, (frame, display, acq_time)
 
     def close(self):
         self.running = False
