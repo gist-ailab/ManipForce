@@ -10,9 +10,9 @@ import click
 import cv2
 import numpy as np
 import scipy.spatial.transform as st
-from scipy.spatial.transform import Rotation  # 추가
+from scipy.spatial.transform import Rotation
 import scipy.signal
-import quaternion  # numpy-quaternion 패키지
+import quaternion
 from typing import Tuple
 import yaml
 import os
@@ -22,7 +22,7 @@ import sys
 import termios
 import tty
 import select
-import requests  # HTTP API 호출용 추가
+import requests
 
 import torch
 import dill
@@ -59,31 +59,30 @@ def load_config(config_path='inference_config.yaml'):
 # Global config variable
 config = None
 
-# 전역 변수 선언
-# ===== 전역 버퍼 =====
+# Global buffers
 prev_frames_cam1, prev_frames_cam2, prev_timestamps = [], [], []
 
-# ---------- 빈도 출력용 전역 ----------
+# Globals for rate display
 _last_disp_t = time.time()
 _disp_cnt    = 0
 _img_accum   = 0.0
 _ft_accum    = 0.0
 
-# 이미지 버퍼 - config 로드 후 초기화됨
+# Image buffers — initialized after config is loaded
 prev_frames_cam1, prev_frames_cam2 = None, None
 prev_timestamps = None
 
-# ee_pose 히스토리 버퍼 추가 -> action 히스토리로 변경
-action_history = deque(maxlen=4)  # 과거 실행한 action들 저장
-USE_ACTION_HISTORY = False  # True: action history 사용, False: 사용 안함
+# Action history buffer
+action_history = deque(maxlen=4)
+USE_ACTION_HISTORY = False  # True: use action history, False: disabled
 
-# Gripper 상태 추적을 위한 전역 변수 - config 로드 후 초기화됨
+# Gripper state tracking globals — initialized after config is loaded
 gripper_history = None
-current_gripper_state = 'open'  # 현재 gripper 상태
-current_gripper_target = 'open'  # 현재 목표 상태
+current_gripper_state = 'open'
+current_gripper_target = 'open'
 
 def close_gripper_http(server_ip, port):
-    """HTTP API를 통해 gripper 닫기"""
+    """Close gripper via HTTP API."""
     try:
         response = requests.post(f"http://{server_ip}:{port}/close_gripper", timeout=1.0)
         return response.status_code == 200
@@ -91,7 +90,7 @@ def close_gripper_http(server_ip, port):
         return False
 
 def open_gripper_http(server_ip, port):
-    """HTTP API를 통해 gripper 열기"""
+    """Open gripper via HTTP API."""
     try:
         response = requests.post(f"http://{server_ip}:{port}/open_gripper", timeout=1.0)
         return response.status_code == 200
@@ -100,51 +99,49 @@ def open_gripper_http(server_ip, port):
 
 def smart_gripper_control(predicted_gripper, franka_api, server_ip):
     """
-    히스토리 기반 gripper 제어 로직
+    History-based gripper control logic.
     1.0 = open, 0.0 = close
-    - 최근 5번의 예측값을 히스토리로 관리
-    - Close: 최근 5번중 2번 이상 close 신호 (predicted < 0.1)
-    - Open: 최근 5번중 3번 이상 open 신호 (predicted >= 0.1)
-    - 이미 원하는 상태면 keep 유지
+    - Maintains a history of the last N predictions.
+    - Close: 2 or more out of the last N predictions signal close (predicted < 0.1).
+    - Open:  3 or more out of the last N predictions signal open  (predicted >= 0.1).
+    - If already in the desired state, hold (keep).
     """
     global current_gripper_state, current_gripper_target, gripper_history
     
-    # 실제 gripper 상태 확인
+    # Query actual gripper state
     try:
         actual_gripper = franka_api.get_gripper_sync()
     except Exception as e:
-        actual_gripper = 0.025  # 기본값 (중간 상태)
+        actual_gripper = 0.025  # default (mid-state)
     
-    # 예측값을 히스토리에 추가 (최근 5개만 유지)
+    # Append prediction to history
     gripper_history.append(predicted_gripper)
-    
-    print(predicted_gripper)
-    
-    # 히스토리가 충분하지 않으면 기본 동작
+
+    # Not enough history yet
     if len(gripper_history) < config['gripper']['history_length']:
         return 'keep'
     
-    # 최근 N개 예측값 분석
+    # Analyse the most recent N predictions
     hist_len = config['gripper']['history_length']
     recent_predictions = list(gripper_history)[-hist_len:]
     close_count = sum(1 for pred in recent_predictions if pred < config['gripper']['close_threshold'])
     open_count = sum(1 for pred in recent_predictions if pred >= config['gripper']['open_threshold'])
     
-    # 현재 물리적 상태 파악
-    is_physically_closed = (actual_gripper < 0.045)   # 물리적으로 닫혀있음
-    is_physically_open = (actual_gripper >= 0.045)     # 물리적으로 열려있음
+    # Determine physical state
+    is_physically_closed = (actual_gripper < 0.045)
+    is_physically_open   = (actual_gripper >= 0.045)
     
-    # 히스토리 기반 의도 판단
+    # Infer intent from history
     wants_close = (close_count >= config['gripper']['close_count_threshold'])
-    wants_open = (open_count >= config['gripper']['open_count_threshold'])
+    wants_open  = (open_count  >= config['gripper']['open_count_threshold'])
     
-    # 제어 로직
+    # Control logic
     if wants_close:
-        # 닫기를 원하는데 이미 닫혀있으면 keep
+        # Already closed — hold
         if is_physically_closed:
             current_gripper_target = 'close'
             return 'keep'
-        # 닫기를 원하고 아직 안 닫혀있으면 close 명령 (한 번만)
+        # Not yet closed — send close command once
         elif current_gripper_target != 'close':
             success = close_gripper_http(server_ip, config['gripper']['http_port'])
             if success:
@@ -152,14 +149,14 @@ def smart_gripper_control(predicted_gripper, franka_api, server_ip):
                 time.sleep(0.1)
             return 'close'
         else:
-            return 'close'  # 이미 close 명령 보냈으니 유지
+            return 'close'
             
     elif wants_open:
-        # 열기를 원하는데 이미 열려있으면 keep
+        # Already open — hold
         if is_physically_open:
             current_gripper_target = 'open'
             return 'keep'
-        # 열기를 원하고 아직 안 열려있으면 open 명령 (한 번만)
+        # Not yet open — send open command once
         elif current_gripper_target != 'open':
             success = open_gripper_http(server_ip, config['gripper']['http_port'])
             if success:
@@ -167,29 +164,29 @@ def smart_gripper_control(predicted_gripper, franka_api, server_ip):
                 time.sleep(0.1)
             return 'open'
         else:
-            return 'open'  # 이미 open 명령 보냈으니 유지
+            return 'open'
             
     else:
-        # 명확한 의도가 없으면 현재 상태 유지
+        # No clear intent — hold current state
         return 'keep'
 
 def _read_two_cams() -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    ok1, res1 = camera.read()                # <-- 본인의 camera 객체
-    ok2, res2 = additional_cam.read()        # <-- 본인의 additional_cam
+    ok1, res1 = camera.read()
+    ok2, res2 = additional_cam.read()
     if not ok1:
-        raise RuntimeError("메인 카메라 read 실패")
+        raise RuntimeError("Main camera read failed")
         
-    f1 = res1[0] # (frame, display, acq_time) 중 frame 획득
+    f1 = res1[0]  # (frame, display, acq_time) -> frame
     if not ok2:
         f2 = np.zeros_like(f1)
     else:
         f2 = res2[0]
     
-    # BGR → RGB 변환 (학습 데이터와 일치시키기 위해)
+    # BGR → RGB (match training data format)
     f1_rgb = cv2.cvtColor(f1, cv2.COLOR_BGR2RGB)
     f2_rgb = cv2.cvtColor(f2, cv2.COLOR_BGR2RGB)
     
-    return f1_rgb, f2_rgb, f1, f2  # RGB (모델용), BGR (시각화용)
+    return f1_rgb, f2_rgb, f1, f2  # RGB (for model), BGR (for visualisation)
 class FTCollector:
     """Collect FT from Aidin UDP sensor and apply IMU-based gravity compensation in a background thread."""
     def __init__(self, ft_reader, imu_pipe, gravity_compensator, rate_hz=200, buf_len=200):
@@ -212,7 +209,7 @@ class FTCollector:
         self.full_ts_list = []
         self.full_ft_list = []
         
-        # 초기 bias 제거를 위한 변수들
+        # Variables for initial bias removal
         self.f_bias_initial = None
         self.t_bias_initial = None
         self.bias_initialized = False
@@ -239,16 +236,16 @@ class FTCollector:
                         forces_filt, torques_filt, gravity_compensation_on=True
                     )
                     
-                    # 초기 bias 제거 (1-7-1.calib_gravity_compensator_aidin.py와 동일한 로직)
+                    # Remove initial bias
                     if not self.bias_initialized:
                         self.f_bias_initial = compensated_force.copy()
                         self.t_bias_initial = compensated_torque.copy()
                         self.bias_initialized = True
-                        print(f"FT 초기 bias 설정: Force={self.f_bias_initial}, Torque={self.t_bias_initial}")
+                        print(f"FT initial bias set: Force={self.f_bias_initial}, Torque={self.t_bias_initial}")
                     
-                    # 초기 bias 제거
+                    # Subtract initial bias
                     f_final = compensated_force - self.f_bias_initial
-                    # fy는 3N 더 빼기 (1-7-1.calib_gravity_compensator_aidin.py와 동일)
+                    # Additional fy correction (empirical offset)
                     f_final[1] -= 3.0
                     t_final = compensated_torque - self.t_bias_initial
                     
@@ -261,7 +258,7 @@ class FTCollector:
                         self.full_ts_list.append(ts)
                         self.full_ft_list.append(ft_vec)
             except Exception as e:
-                print(f"\rFT 데이터 수집 오류: {e}", end='', flush=True)
+                print(f"\rFT data collection error: {e}", end='', flush=True)
 
             nxt += period
             time.sleep(max(0, nxt - time.perf_counter()))
@@ -299,8 +296,8 @@ class FTCollector:
 
 def display_rates(img_freq: float, ft_ts: np.ndarray):
     """
-    img_freq : 직전 프레임 FPS
-    ft_ts    : 이번 get_obs 직전에 FTCollector에서 꺼낸 timestamp 배열
+    img_freq : FPS of the most recent frame
+    ft_ts    : timestamp array from FTCollector for the current get_obs call
     """
     global _last_disp_t, _disp_cnt, _img_accum, _ft_accum
 
@@ -308,8 +305,8 @@ def display_rates(img_freq: float, ft_ts: np.ndarray):
     _img_accum  += img_freq
     if len(ft_ts) >= 2:
         time_diffs = np.diff(ft_ts[-8:])
-        if np.all(time_diffs > 0):  # 시간이 증가하는지 확인
-            ft_hz = 1.0 / np.mean(time_diffs)  # 최근 8샘플로 FT Hz 추정
+        if np.all(time_diffs > 0):  # verify timestamps are increasing
+            ft_hz = 1.0 / np.mean(time_diffs)  # estimate FT Hz from last 8 samples
             _ft_accum += ft_hz
         else:
             ft_hz = 0.0
@@ -317,14 +314,14 @@ def display_rates(img_freq: float, ft_ts: np.ndarray):
         ft_hz = 0.0
 
     now = time.time()
-    if now - _last_disp_t >= 1.0:                  # 1초마다 평균 출력
+    if now - _last_disp_t >= 1.0:  # print average every second
         avg_img = _img_accum / _disp_cnt
         avg_ft  = _ft_accum  / _disp_cnt
         sys.stdout.write(
             f"\r[Rate] IMG {avg_img:5.1f} FPS | FT {avg_ft:5.1f} Hz")
         sys.stdout.flush()
 
-        # 리셋
+        # Reset accumulators
         _last_disp_t = now
         _disp_cnt = _img_accum = _ft_accum = 0.0
 
@@ -339,12 +336,9 @@ def quaternion_multiply(q1, q2):
     return np.array([w, x, y, z])
 
 def transform_pose(pose, current_ee_pose, ft_data):
-    # R_mat = np.array(config['coordinate_transform']['R_mat'])
     R_mat_pos = np.array(config['coordinate_transform']['R_mat_pos'])
     R_mat_rot = np.array(config['coordinate_transform']['R_mat_rot'])
-    # 스케일 설정
-    
-    # rotation 스케일 - 개별 키가 있으면 사용, 없으면 xy_scale 사용
+    # Per-axis rotation scale — use individual keys if present, otherwise fall back to xy_scale
     if 'rotation_x_scale' in config['action'] and 'rotation_y_scale' in config['action']:
         rotation_x_scale = config['action']['rotation_x_scale']
         rotation_y_scale = config['action']['rotation_y_scale']
@@ -353,11 +347,10 @@ def transform_pose(pose, current_ee_pose, ft_data):
         rotation_x_scale = rotation_xy_scale
         rotation_y_scale = rotation_xy_scale
     
-    rotation_z_scale = config['action']['rotation_z_scale']   # z축 회전 스케일
+    rotation_z_scale = config['action']['rotation_z_scale']
     
     rel_pos = R_mat_pos @ pose[:3]
-    # divide xy and z
-    # position 스케일 - 개별 키가 있으면 사용, 없으면 xy_scale 사용
+    # Per-axis position scale — use individual keys if present, otherwise fall back to xy_scale
     if 'position_x_scale' in config['action'] and 'position_y_scale' in config['action']:
         position_x_scale = config['action']['position_x_scale']
         position_y_scale = config['action']['position_y_scale']
@@ -372,54 +365,51 @@ def transform_pose(pose, current_ee_pose, ft_data):
     rel_pos_z = rel_pos[2] * position_z_scale
     rel_pos = [rel_pos_x, rel_pos_y, rel_pos_z]
     
-    # 회전 처리 - 축별 다른 스케일 적용
-    delta_quat = np.array(pose[3:7]) # [x,y,z,w]
+    # Rotation handling — apply per-axis scale
+    delta_quat = np.array(pose[3:7])  # [x, y, z, w]
     
-    # quaternion을 rotation vector로 변환하여 축별 스케일링
+    # Convert quaternion to rotation vector for per-axis scaling
     R_orig = Rotation.from_quat(delta_quat)
     rotvec_orig = R_orig.as_rotvec()
         
-    # 축별 스케일링 적용
+    # Apply per-axis scale
     rotvec_scaled = rotvec_orig.copy()
-    rotvec_scaled[0] *= rotation_x_scale  # x축
-    rotvec_scaled[1] *= rotation_y_scale  # y축  
-    rotvec_scaled[2] *= rotation_z_scale   # z축 (더 큰 스케일)
+    rotvec_scaled[0] *= rotation_x_scale  # x-axis
+    rotvec_scaled[1] *= rotation_y_scale  # y-axis
+    rotvec_scaled[2] *= rotation_z_scale  # z-axis
     
-    # 다시 rotation matrix로 변환
+    # Convert back to rotation matrix
     R_scaled = Rotation.from_rotvec(rotvec_scaled).as_matrix()
     R_new = R_mat_rot @ R_scaled @ R_mat_rot.T
     rel_quat = Rotation.from_matrix(R_new).as_quat()
     
-    # 현재 EE의 orientation을 반영
-    current_quat = current_ee_pose[3:]  # [w, x, y, z]
-    current_quat = np.roll(current_quat, -1)  # [x, y, z, w]로 변환
+    # Apply current EE orientation
+    current_quat = current_ee_pose[3:]   # [w, x, y, z]
+    current_quat = np.roll(current_quat, -1)  # → [x, y, z, w]
     current_rot = Rotation.from_quat(current_quat)
     world_rel_pos = current_rot.inv().apply(rel_pos)
     
     return np.concatenate([world_rel_pos, rel_quat])
 
-# === 움직임이 거의 없을 때 y축으로 미세하게 눌러주는 함수 ===
 def nudge_y_if_stuck(current_ee_pose: np.ndarray,
                      last_target_pose: np.ndarray,
                      pos_thresh: float = 1e-4,
                      nudge_amount: float = 0.002) -> Tuple[np.ndarray, bool]:
     """
-    현재 EE pose가 직전 타겟 포즈와 거의 차이가 없을 때(y가 잘 안 바뀌는 상황 포함)
-    y축으로 미세하게 움직임을 추가해 stuck을 벗어나도록 유도한다.
+    When the EE pose barely differs from the previous target (robot is stuck),
+    apply a small y-axis perturbation to break the deadlock.
 
     returns: (nudged_target_pose, did_nudge)
     """
-    global _y_nudge_dir
     try:
-        # 위치 차이가 매우 작으면 stuck으로 판단
         pos_delta = np.linalg.norm((current_ee_pose[:3] - last_target_pose[:3]).astype(np.float64))
     except Exception:
         pos_delta = np.linalg.norm(current_ee_pose[:3] - last_target_pose[:3])
 
     if pos_delta < pos_thresh:
         nudged = last_target_pose.copy()
-        nudged[1] += nudge_amount * _y_nudge_dir  # y축으로 살짝 이동
-        _y_nudge_dir *= -1  # 방향 토글하여 드리프트 최소화
+        nudged[1] += nudge_amount * _y_nudge_dir  # small y-axis perturbation
+        _y_nudge_dir *= -1  # toggle direction to minimise drift
         return nudged, True
     return last_target_pose, False
 
@@ -437,49 +427,47 @@ def connect_to_server(host='localhost', port=4999, timeout=5):
             continue
 
 def check_keyboard_input():
-    """비차단 방식으로 키보드 입력 확인 (OpenCV 창에서만)"""
-    # OpenCV 창에서 키 입력 확인 (1ms 대기)
+    """Non-blocking keyboard input check via OpenCV window."""
     key = cv2.waitKey(1) & 0xFF
     
     if key != 255:  # 키가 눌렸으면
-        if key == ord('q'):  # q
+        if key == ord('q'):
             return 'q'
-        elif key == ord('t'):  # t
+        elif key == ord('t'):
             return 't'
-        elif key == ord('p'):  # p
+        elif key == ord('p'):
             return 'p'
-        elif key == ord('r'):  # r
+        elif key == ord('r'):
             return 'r'
-        elif key == ord('1'):  # 1
+        elif key == ord('1'):
             return '1'
-        elif key == ord('2'):  # 2
+        elif key == ord('2'):
             return '2'
-        elif key == ord('0'):  # 0
+        elif key == ord('0'):
             return '0'
     
     return None
 
 def resize_with_padding(img, target_size=224):
     """
-    이미지의 aspect ratio를 유지하면서 padding을 추가하여 정사각형으로 만듦
+    Resize an image to a square while preserving aspect ratio by padding.
     img: (H, W, C) uint8
-    return: (224, 224, C) uint8
+    return: (target_size, target_size, C) uint8
     """
     h, w = img.shape[:2]
     aspect = w / h
     
-    if aspect > 1:  # 가로가 더 긴 경우 (1280x800)
+    if aspect > 1:  # landscape (e.g. 1280×800)
         new_w = target_size
         new_h = int(target_size / aspect)
-    else:  # 세로가 더 긴 경우 (640x480)
+    else:  # portrait (e.g. 640×480)
         new_h = target_size
         new_w = int(target_size * aspect)
     
-    # PIL로 리사이즈
     pil_img = Image.fromarray(img)
     resized = pil_img.resize((new_w, new_h))
     
-    # 패딩
+    # Pad to square
     new_img = Image.new('RGB', (target_size, target_size), (0, 0, 0))
     paste_x = (target_size - new_w) // 2
     paste_y = (target_size - new_h) // 2

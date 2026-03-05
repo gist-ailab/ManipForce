@@ -5,26 +5,28 @@ def main():
     parser = argparse.ArgumentParser(description="Run training script with Hydra and custom dataset paths.")
     parser.add_argument('--gpu', type=int, default=0, help="GPU ID to use.")
     parser.add_argument('--config', type=str, default='manipforce_ods2_256x256', help="Hydra config name.")
-    parser.add_argument('--dataset', type=str, default='lanport', help="Dataset key from the predefined dictionary.")
+    parser.add_argument('--dataset', type=str, required=True, help="Dataset key (e.g. 'gear', 'battery') or a direct path to a .zarr file.")
     args = parser.parse_args()
 
-    # Predefined dataset paths
+    # Predefined dataset shortcuts (use relative paths, compatible with any environment)
+    # You can also pass a direct path to a .zarr file via --dataset, e.g.:
+    #   --dataset data/my_task.zarr
     dataset_path_dict = {
-        'lanport': '../../dset/manipforce_dataset/LAN_Insertion_0830.zarr',
-        'gear': '/home/ailab-2204/Workspace/ManipForce/data/gear_assem.zarr',
-        'battery': '/home/ailab-2204/Workspace/ManipForce/data/battery_assem.zarr',
+        'gear':    'data/gear_assem.zarr',
+        'battery': 'data/battery_assem.zarr',
     }
 
-    if args.dataset not in dataset_path_dict:
-        print(f"Error: Dataset '{args.dataset}' not found in dataset_path_dict.")
+    # Allow direct path to be passed as --dataset argument
+    if os.path.exists(args.dataset):
+        dataset_path = args.dataset
+        dataset_name = os.path.splitext(os.path.basename(args.dataset))[0]
+    elif args.dataset in dataset_path_dict:
+        dataset_path = dataset_path_dict[args.dataset]
+        dataset_name = args.dataset
+    else:
+        print(f"Error: Dataset '{args.dataset}' is not a known key or a valid path.")
+        print(f"Available keys: {list(dataset_path_dict.keys())}")
         return
-
-    gpu_id = args.gpu
-    config_name = args.config
-    if config_name.endswith('.yaml'):
-        config_name = config_name[:-5]
-    dataset_name = args.dataset
-    dataset_path = dataset_path_dict[dataset_name]
     job_name = f"{config_name}_{dataset_name}"
 
     # Build the command string

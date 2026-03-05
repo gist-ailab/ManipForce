@@ -12,14 +12,15 @@ import time
 
 from utils.rs_capture import DJICapture
 
-# ArUco 마커 설정
+# ArUco marker settings
 dictionary = aruco.getPredefinedDictionary(aruco.DICT_6X6_100)
 T_cam_to_cube_initial = None
 
 def load_dji_intrinsics(json_path: str = "calibration/calibration_dji_intrinsics.json"):
     """
-    DJI 액션캠 체스보드 캘리브레이션 결과(JSON)에서 내적 행렬 K와 왜곡 계수 dist를 로드.
-    dji_calibrate_intrinsics.py 출력 포맷과 동일하다고 가정.
+    Load the intrinsic matrix K and distortion coefficients dist from a
+    DJI action-camera chessboard calibration result (JSON).
+    Assumes the same output format as dji_calibrate_intrinsics.py.
     """
     with open(json_path, "r") as f:
         data = json.load(f)
@@ -29,15 +30,15 @@ def load_dji_intrinsics(json_path: str = "calibration/calibration_dji_intrinsics
 
 
 def reduce_overexposure(image_bgr: np.ndarray) -> np.ndarray:
-    """하드웨어 노출 제어가 불가할 때, 과노출 완화를 위해 V 채널을 동적으로 낮춤."""
+    """Dynamically reduce the V channel to mitigate overexposure when hardware exposure control is unavailable."""
     if image_bgr is None or image_bgr.size == 0:
         return image_bgr
     hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
     v = hsv[..., 2].astype(np.float32)
     mean_v = float(v.mean())
-    target_mean = 120.0  # 더 어둡게 목표 설정
+    target_mean = 120.0  # target a darker image
     if mean_v > target_mean:
-        factor = max(0.3, target_mean / (mean_v + 1e-6))  # 0.3 ~ 1.0 사이로 더 공격적 축소
+        factor = max(0.3, target_mean / (mean_v + 1e-6))  # aggressive reduction in range 0.3–1.0
         v = np.clip(v * factor, 0, 255)
         hsv[..., 2] = v.astype(np.uint8)
         return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
@@ -45,15 +46,15 @@ def reduce_overexposure(image_bgr: np.ndarray) -> np.ndarray:
 
 def transform_to_cube_center(marker_id, marker_pose):
     """
-    마커의 좌표를 큐브 중심 좌표계로 변환합니다.
-    모든 마커의 x축이 원래 오른쪽을 향하도록 부착된 상태입니다.
+    Transform a marker's coordinates into the cube-centre coordinate frame.
+    All markers are assumed to be attached with their x-axis pointing to the right.
     """
     cube_size = 0.058  # 48mm
     half_size = cube_size / 2
     
-    # 각 마커에서 큐브 중심까지의 변환 행렬
+    # Transformation matrices from each marker to the cube centre
     transforms = {
-        1: {  # Front face (정면)
+        1: {  # Front face
             'translation': np.array([0, 0, -half_size]),
             'rotation': np.array([
                 [1, 0, 0],
@@ -61,52 +62,52 @@ def transform_to_cube_center(marker_id, marker_pose):
                 [0, 0, 1]
             ])
         },
-        3: {  # Left face (왼쪽)
+        3: {  # Left face
             'translation': np.array([0, 0, -half_size]),
             'rotation': np.array([
-                [0, 0, 1],    # y축으로 90도 회전
+                [0, 0, 1],    # 90-degree rotation about the y-axis
                 [0, 1, 0],
                 [-1, 0, 0]
             ])
         },
-        0: {  # Right face (오른쪽)
+        0: {  # Right face
             'translation': np.array([0, 0, -half_size]),
             'rotation': np.array([
-                [0, 0, -1],   # y축으로 -90도 회전 (x축이 -z방향으로)
-                [0, 1, 0],    # y축은 그대로
-                [1, 0, 0]     # z축이 x방향으로
+                [0, 0, -1],   # -90-degree rotation about the y-axis (x -> -z)
+                [0, 1, 0],    # y-axis unchanged
+                [1, 0, 0]     # z-axis -> x direction
             ])
         },
-        2: {  # Back face (뒷면)
-            'translation': np.array([0, 0, -half_size]),  # half_size로 수정
+        2: {  # Back face
+            'translation': np.array([0, 0, -half_size]),
             'rotation': np.array([
-                [-1, 0, 0],   # y축으로 180도 회전
-                [0, 1, 0],    # y축은 그대로
-                [0, 0, -1]    # z축이 반대로
+                [-1, 0, 0],   # 180-degree rotation about the y-axis
+                [0, 1, 0],    # y-axis unchanged
+                [0, 0, -1]    # z-axis reversed
             ])
         },
-        4: {  # Top face (윗면)
-            'translation': np.array([0, 0, -half_size]),  # 다른 마커들과 동일하게
+        4: {  # Top face
+            'translation': np.array([0, 0, -half_size]),
             'rotation': np.array([
-                [1, 0, 0],    # x축은 그대로
-                [0, 0, -1],   # y축이 -z방향으로
-                [0, 1, 0]     # z축이 y방향으로
+                [1, 0, 0],    # x-axis unchanged
+                [0, 0, -1],   # y-axis -> -z direction
+                [0, 1, 0]     # z-axis -> y direction
             ])
         }
     }
 
     
     if marker_id not in transforms:
-            print(f"마커 ID {marker_id}는 지원되지 않습니다.")
+            print(f"Marker ID {marker_id} is not supported.")
             return None
         
     transform = transforms[marker_id]
-    
-    # 마커의 현재 위치와 방향
+
+    # Current position and orientation of the marker
     marker_pos = np.array(marker_pose['position'])
     marker_rot = R.from_quat(marker_pose['orientation']).as_matrix()
-    
-    # 큐브 중심 기준 좌표계로 변환
+
+    # Transform into the cube-centre coordinate frame
     cube_rot = marker_rot @ transform['rotation']
     cube_pos = marker_pos + (marker_rot @ transform['translation'])
     
@@ -115,7 +116,7 @@ def transform_to_cube_center(marker_id, marker_pose):
         'orientation': R.from_matrix(cube_rot).as_quat()
     }
 def normalize_quaternion_sign(curr_quat, ref_quat):
-    """현재 쿼터니언을 기준 쿼터니언과 부호를 일치시킴"""
+    """Flip the sign of curr_quat to match that of ref_quat (ensures continuity)."""
     if np.dot(curr_quat, ref_quat) < 0:
         return -np.array(curr_quat)
     return np.array(curr_quat)
@@ -126,7 +127,7 @@ def low_pass_filter(new_value, prev_value, alpha=0.8):
     return alpha * np.array(prev_value) + (1 - alpha) * np.array(new_value)
 
 def detect_markers_and_estimate_pose(image, K, D):
-    # get_wrist_pose_adv.py와 동일한 단일 단계 검출 로직으로 정렬 (안정성 및 떨림 개선)
+    # Aligned with the single-stage detection logic in get_wrist_pose_adv.py for improved stability and reduced jitter
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
     parameters = aruco.DetectorParameters()
@@ -148,13 +149,13 @@ def detect_markers_and_estimate_pose(image, K, D):
     if ids is None:
         return image, None
 
-    # 마커 크기
+    # Marker physical size
     marker_size = 0.0483
-    
+
     cube_centers = []
     for i in range(len(corners)):
         marker_id = ids[i][0]
-        # 그리퍼 마커(6, 7)는 큐브 마커가 아니므로 건너뛰기
+        # Skip gripper markers (IDs 6 and 7) as they are not cube markers
         if marker_id in [6, 7]:
             continue
             
@@ -171,7 +172,7 @@ def detect_markers_and_estimate_pose(image, K, D):
     if not cube_centers:
         return image, None
 
-    # 큐브 중심 융합 (다수 마커 평균)
+    # Fuse cube centres from multiple markers (average)
     ref_q = cube_centers[0]['orientation']
     for c in cube_centers:
         c['orientation'] = normalize_quaternion_sign(c['orientation'], ref_q)
@@ -180,8 +181,8 @@ def detect_markers_and_estimate_pose(image, K, D):
 
     pos_local = avg_p
     quat_local = avg_q
-    
-    # 시각화
+
+    # Visualise
     vis = image.copy()
     vis = aruco.drawDetectedMarkers(vis, corners, ids)
     rvec, _ = cv2.Rodrigues(R.from_quat(quat_local).as_matrix())
@@ -193,60 +194,60 @@ def detect_markers_and_estimate_pose(image, K, D):
 
 def transform_aruco_to_tcp(aruco_pose, tcp_offset=None, R_aruco_to_tcp=None):
     """
-    ArUco 큐브 좌표계 기준 포즈를 TCP 좌표계 기준 포즈로 변환
-    
-    매개변수:
-    aruco_pose (dict): ArUco 좌표계 기준 포즈 딕셔너리 {'position': [...], 'orientation': [...]}
-    tcp_offset (ndarray, optional): TCP의 ArUco 큐브 기준 오프셋 [x, y, z]. 기본값: [0, -0.136, 0.13]
-    R_aruco_to_tcp (ndarray, optional): ArUco에서 TCP로의 회전 행렬. 기본값: 단위 행렬(회전 없음)
-    
-    반환값:
-    dict: TCP 좌표계 기준 포즈 {'position': [...], 'orientation': [...]}
+    Transform a pose expressed in the ArUco cube frame to the TCP frame.
+
+    Parameters:
+    aruco_pose (dict): Pose in the ArUco frame {'position': [...], 'orientation': [...]}
+    tcp_offset (ndarray, optional): TCP offset relative to the ArUco cube [x, y, z]. Default: [0, -0.136, 0.11]
+    R_aruco_to_tcp (ndarray, optional): Rotation matrix from ArUco to TCP. Default: identity (no rotation)
+
+    Returns:
+    dict: TCP pose {'position': [...], 'orientation': [...]}
     """
-    # 기본값 설정
+    # Set defaults
 
     if tcp_offset is None:
-        tcp_offset = np.array([0.0, -0.136, 0.11])  # hand–eye 캘리브레이션 오프셋 #긴게 0.13, 짧은게 0.11
+        tcp_offset = np.array([0.0, -0.136, 0.11])  # hand-eye calibration offset
     if R_aruco_to_tcp is None:
         R_aruco_to_tcp = np.eye(3)
-    
-    # 1. 위치와 방향 추출
+
+    # 1. Extract position and orientation
     aruco_position = np.array(aruco_pose['position'])  # x, y, z
-    aruco_orientation = np.array(aruco_pose['orientation'])  # 쿼터니언 또는 오일러 각도
-    
-    # 2. 방향 회전 행렬로 변환
-    if len(aruco_orientation) == 4:  # 쿼터니언 [x, y, z, w] 또는 [w, x, y, z]
-        # 쿼터니언 형식에 따른 처리 (scipy는 [x, y, z, w] 형식 사용)
+    aruco_orientation = np.array(aruco_pose['orientation'])  # quaternion or Euler angles
+
+    # 2. Convert orientation to rotation matrix
+    if len(aruco_orientation) == 4:  # quaternion [x, y, z, w]
+        # scipy uses [x, y, z, w] convention
         R_aruco = R.from_quat(aruco_orientation).as_matrix()
-    elif len(aruco_orientation) == 3:  # 오일러 각도 [rx, ry, rz]
+    elif len(aruco_orientation) == 3:  # Euler angles [rx, ry, rz]
         R_aruco = R.from_euler('xyz', aruco_orientation).as_matrix()
     else:
-        raise ValueError(f"지원되지 않는 방향 형식: {aruco_orientation}")
-    
-    # 3. TCP 위치 계산: ArUco 위치 + (ArUco 방향에 따라 회전된 오프셋)
+        raise ValueError(f"Unsupported orientation format: {aruco_orientation}")
+
+    # 3. Compute TCP position: ArUco position + rotated offset
     tcp_position = aruco_position + R_aruco @ tcp_offset
-    
-    # 4. TCP 방향 계산: ArUco 방향에 추가 회전 적용
+
+    # 4. Compute TCP orientation: apply additional rotation to ArUco orientation
     R_tcp = R_aruco @ R_aruco_to_tcp
     tcp_orientation = R.from_matrix(R_tcp).as_quat()
-    
-    # 5. 최종 TCP 포즈 생성 (딕셔너리 형태로 반환)
+
+    # 5. Build and return the final TCP pose dictionary
     tcp_pose = {
         'position': tcp_position.tolist(),
         'orientation': tcp_orientation.tolist()
     }
-    
+
     return tcp_pose
 
 
 def main():
-    # DJI 액션캠 intrinsic 로드
+    # Load DJI action-camera intrinsics
     K_cam, D_cam = load_dji_intrinsics("calibration/calibration_dji_intrinsics.json")
     print("[INFO] DJI camera intrinsics loaded.")
     print("K:\n", K_cam)
     print("dist:", D_cam)
 
-    # DJICapture로 카메라 열기 (자동으로 DJI 장치 탐색, MJPG 코덱, 720p 설정)
+    # Open the camera via DJICapture (auto-detects DJI device, MJPG codec, 720p)
     dji_cam = DJICapture(
         name='realtime_tracking',
         dim=(1280, 720),
@@ -254,7 +255,7 @@ def main():
         zero_config=False,
         threaded=True
     )
-    # GUI 초기화 (스레드 충돌 방지)
+    # Initialise GUI (prevents thread conflicts)
     cv2.namedWindow('dummy')
     cv2.waitKey(1)
     cv2.destroyWindow('dummy')
@@ -262,7 +263,7 @@ def main():
     print(f"[INFO] DJI camera opened: {dji_cam.device}")
 
     prev_pose = None
-    alpha = 0.3  # 더 낮게(0.3) 설정하여 반응성 극대화 (0.0=노필터, 1.0=강한필터)
+    alpha = 0.3  # lower value (0.3) maximises responsiveness (0.0 = no filter, 1.0 = heavy filter)
     fps_start_time = time.time()
     fps_counter = 0
 
@@ -272,24 +273,24 @@ def main():
         if not ok or result is None or result[0] is None:
             continue
 
-        frame = result[0].copy()  # 원본 프레임 (Thread-safe copy)
+        frame = result[0].copy()  # thread-safe copy of the original frame
 
-        # 하드웨어 제어 불가 시 소프트웨어로 과노출 완화
+        # Software overexposure mitigation when hardware control is unavailable
         frame = reduce_overexposure(frame)
 
-        # 마커 감지 및 자세 추정
+        # Marker detection and pose estimation
         image_with_axes, aruco_pose = detect_markers_and_estimate_pose(frame, K_cam, D_cam)
 
-        # TCP 포즈 변환 및 두 좌표계 모두 표시
+        # Transform to TCP pose and display both coordinate frames
         if aruco_pose is not None:
-            # 저역 통과 필터(LPF) 적용으로 떨림 완화
+            # Apply low-pass filter (LPF) to reduce jitter
             if prev_pose is not None:
-                # alpha가 작을수록 실시간 반응성이 좋아짐
+                # smaller alpha = more responsive
                 aruco_pose['position'] = low_pass_filter(aruco_pose['position'], prev_pose['position'], alpha).tolist()
                 aruco_pose['orientation'] = normalize_quaternion_sign(aruco_pose['orientation'], prev_pose['orientation'])
                 aruco_pose['orientation'] = low_pass_filter(aruco_pose['orientation'], prev_pose['orientation'], alpha).tolist()
                 aruco_pose['orientation'] = (np.array(aruco_pose['orientation']) / np.linalg.norm(aruco_pose['orientation'])).tolist()
-            
+
             prev_pose = aruco_pose
 
             tcp_pose = transform_aruco_to_tcp(
@@ -297,7 +298,7 @@ def main():
                 tcp_offset=np.array([0.0, -0.13423, 0.135])
             )
 
-            # TCP 좌표계도 화면에 그리기
+            # Draw TCP coordinate frame on the image
             tcp_rvec = cv2.Rodrigues(R.from_quat(tcp_pose['orientation']).as_matrix())[0]
             tcp_tvec = np.array(tcp_pose['position'])
             cv2.drawFrameAxes(image_with_axes, K_cam, D_cam, tcp_rvec, tcp_tvec, 0.08)

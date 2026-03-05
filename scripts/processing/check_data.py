@@ -11,7 +11,7 @@ import argparse
 from scipy.spatial.transform import Rotation
 
 def main():
-    # 커맨드 라인 인자 파싱
+    # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Check and visualize pose data')
     parser.add_argument('--data_path', type=str, required=True,
                       help='Path to the data directory (e.g., data/0314/episode_3)')
@@ -51,8 +51,8 @@ def main():
             raw_positions.append(raw_entry['pose']['position'])
             raw_orientations.append(raw_entry['pose']['orientation'])
             raw_gripper_states.append(raw_entry['pose'].get('gripper_state', 1.0))
-            ref_positions.append(ref_entry['pose']['position'])  # 절대 위치 사용
-            ref_orientations.append(ref_entry['pose']['orientation'])  # 절대 방향 사용
+            ref_positions.append(ref_entry['pose']['position'])  # absolute position
+            ref_orientations.append(ref_entry['pose']['orientation'])  # absolute orientation
             ref_gripper_states.append(ref_entry['pose']['gripper_state'])
         
         return (np.array(timestamps), 
@@ -81,11 +81,11 @@ def main():
     raw_ori_fixed = fix_quaternion_discontinuities(raw_ori)
     ref_ori_fixed = fix_quaternion_discontinuities(ref_ori)
 
-    # 쿼터니언을 오일러 각도로 변환 (degrees)
+    # Convert quaternions to Euler angles (degrees)
     raw_euler = Rotation.from_quat(raw_ori_fixed).as_euler('xyz', degrees=True)
     ref_euler = Rotation.from_quat(ref_ori_fixed).as_euler('xyz', degrees=True)
 
-    # Create subplots with 7 axes (3행 3열, 마지막 행은 1개만)
+    # Create subplots: 3x3 grid, last row spans all columns
     fig = plt.figure(figsize=(15, 12))
     gs = fig.add_gridspec(3, 3, height_ratios=[1, 1, 1])
     
@@ -95,7 +95,7 @@ def main():
     ax4 = fig.add_subplot(gs[1, 0])
     ax5 = fig.add_subplot(gs[1, 1])
     ax6 = fig.add_subplot(gs[1, 2])
-    ax7 = fig.add_subplot(gs[2, :])  # 마지막 행 전체 사용
+    ax7 = fig.add_subplot(gs[2, :])  # last row spans all columns
 
     # Plot positions
     ax1.plot(timestamps, raw_pos[:, 0], 'b-', label='Raw', alpha=0.5)
@@ -134,7 +134,7 @@ def main():
     ax7.set_ylabel('State')
     ax7.legend()
 
-    # 전체 레이아웃 조정
+    # Adjust overall layout
     plt.tight_layout()
     plt.show()
 

@@ -27,12 +27,12 @@ from utils.real_inference_util import (get_real_gumi_obs_dict,
 from diffusion_policy.dataset.gumi_dataset_w_ft import GumiDatasetWithFT
 from torch.utils.data import DataLoader
 
-# 전역 변수 선언
+# Global state
 prev_frames = []
 prev_timestamps = []
 current_img_idx = 0
 
-# 데이터 수집 주기가 30Hz인 경우
+# Data collection at 30 Hz
 dt = 1.0 / 30.0  # 30Hz
 
 def convert_action_10d_to_8d(action_10d):
@@ -49,12 +49,12 @@ def convert_action_10d_to_8d(action_10d):
     third_col = np.cross(first_col, second_col)
 
     rotation_matrix = np.stack([first_col, second_col, third_col], axis=-1)
-    quat = R.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w] 순서
-    # 7D 벡터로 조합
+    quat = R.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w] (scipy convention)
+    # Combine into 8D action vector
     action_8d = np.concatenate([
-        position,    # 위치 (3)
-        quat,       # 쿼터니언 (4)
-        gripper     # 그리퍼 (1)
+        position,    # position (3)
+        quat,        # quaternion (4)
+        gripper      # gripper (1)
     ], axis=-1)
     
     return action_8d
@@ -70,60 +70,60 @@ def lowpass_filter(data: np.ndarray, cutoff: float, fs: float, order: int = 5) -
     return lfilter(b, a, data, axis=0)
 
 def moving_average_filter(data: np.ndarray, window_size: int = 5) -> np.ndarray:
-    """이동 평균 필터 - 오프셋 문제 없음"""
+    """Moving average filter — no offset issues."""
     if len(data) < window_size:
         return data
-    
-    # 패딩을 위해 양 끝에 반사
+
+    # Reflect at both ends for padding
     pad_size = window_size // 2
     padded_data = np.pad(data, (pad_size, pad_size), mode='edge')
-    
-    # 이동 평균 계산
+
+    # Compute moving average
     smoothed = np.zeros_like(data)
     for i in range(len(data)):
         smoothed[i] = np.mean(padded_data[i:i+window_size])
-    
+
     return smoothed
 
 def savgol_filter(data: np.ndarray, window_size: int = 5, poly_order: int = 2) -> np.ndarray:
-    """Savitzky-Golay 필터 - 스케일 보존하면서 스무딩"""
+    """Savitzky-Golay filter — smooths while preserving scale."""
     if len(data) < window_size:
         return data
-    
-    # window_size가 짝수면 홀수로 만들기
+
+    # window_size must be odd
     if window_size % 2 == 0:
         window_size += 1
-    
-    # poly_order는 window_size보다 작아야 함
+
+    # poly_order must be less than window_size
     poly_order = min(poly_order, window_size - 1)
-    
+
     try:
         from scipy.signal import savgol_filter as scipy_savgol
         return scipy_savgol(data, window_size, poly_order)
     except ImportError:
-        # scipy가 없으면 이동 평균으로 대체
+        # Fall back to moving average if scipy is unavailable
         print("Warning: scipy not available, using moving average instead")
         return moving_average_filter(data, window_size)
 
 def weighted_moving_average_filter(data: np.ndarray, window_size: int = 5) -> np.ndarray:
-    """가중 이동 평균 필터 - 중앙값에 더 높은 가중치"""
+    """Weighted moving average filter — higher weights near the center."""
     if len(data) < window_size:
         return data
-    
-    # 가중치 생성 (중앙에 높은 가중치)
+
+    # Build Gaussian-shaped weights (higher weight at the center)
     weights = np.exp(-0.5 * np.linspace(-2, 2, window_size)**2)
-    weights = weights / np.sum(weights)  # 정규화
-    
-    # 패딩을 위해 양 끝에 반사
+    weights = weights / np.sum(weights)  # normalize
+
+    # Reflect at both ends for padding
     pad_size = window_size // 2
     padded_data = np.pad(data, (pad_size, pad_size), mode='edge')
-    
-    # 가중 이동 평균 계산
+
+    # Weighted moving average
     smoothed = np.zeros_like(data)
     for i in range(len(data)):
         window_data = padded_data[i:i+window_size]
         smoothed[i] = np.sum(window_data * weights)
-    
+
     return smoothed
 
 
@@ -138,7 +138,7 @@ def get_obs(data_iter, episode_start_idx=None, episode_end_idx=None, current_glo
     except StopIteration:
         return None, None, None
     
-    # 특정 에피소드 범위를 벗어나면 None 반환
+    # Return None if outside the specified episode range
     if episode_start_idx is not None and episode_end_idx is not None:
         if current_global_idx < episode_start_idx or current_global_idx >= episode_end_idx:
             return None, None, None
@@ -147,33 +147,33 @@ def get_obs(data_iter, episode_start_idx=None, episode_end_idx=None, current_glo
     cam1_tchw = batch['obs']['handeye_cam_1'].squeeze(0).cpu().numpy()  # (T,C,H,W)
     cam2_tchw = batch['obs']['handeye_cam_2'].squeeze(0).cpu().numpy()  # (T,C,H,W)
 
-    # BGR → RGB 변환 (학습 데이터와 일치시키기 위해) - TCHW 형태에서 변환
-    cam1_thwc = cam1_tchw.transpose(0, 2, 3, 1)  # (T,H,W,C)로 임시 변환
-    cam2_thwc = cam2_tchw.transpose(0, 2, 3, 1)  # (T,H,W,C)로 임시 변환
-    
-    # BGR → RGB 변환
+    # Convert BGR -> RGB to match training data  (TCHW -> THWC -> TCHW)
+    cam1_thwc = cam1_tchw.transpose(0, 2, 3, 1)  # temporarily reshape to (T,H,W,C)
+    cam2_thwc = cam2_tchw.transpose(0, 2, 3, 1)  # temporarily reshape to (T,H,W,C)
+
+    # BGR -> RGB conversion
     cam1_rgb = np.stack([cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in cam1_thwc])
     cam2_rgb = np.stack([cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in cam2_thwc])
-    
-    # 다시 TCHW 형태로 변환
+
+    # Reshape back to TCHW
     cam1_tchw_rgb = cam1_rgb.transpose(0, 3, 1, 2)  # (T,C,H,W)
     cam2_tchw_rgb = cam2_rgb.transpose(0, 3, 1, 2)  # (T,C,H,W)
 
     # ---- pull out FT window ----
     ft_data = batch['obs']['ft_data'].squeeze(0).cpu().numpy()          # (T_ft, D_ft)
     
-    # FT 타임스탬프도 포함
+    # Also include FT timestamps
     ft_timestamps = None
     if 'ft_timestamps' in batch['obs']:
         ft_timestamps = batch['obs']['ft_timestamps'].squeeze(0).cpu().numpy()
-    
+
     obs_np = {
-        'handeye_cam_1': cam1_tchw_rgb,  # (T,C,H,W) 형태 유지
-        'handeye_cam_2': cam2_tchw_rgb,  # (T,C,H,W) 형태 유지
+        'handeye_cam_1': cam1_tchw_rgb,  # (T,C,H,W)
+        'handeye_cam_2': cam2_tchw_rgb,  # (T,C,H,W)
         'ft_data':       ft_data,
     }
-    
-    # FT 타임스탬프가 있으면 추가
+
+    # Add FT timestamps if available
     if ft_timestamps is not None:
         obs_np['ft_timestamps'] = ft_timestamps
 
@@ -182,8 +182,8 @@ def get_obs(data_iter, episode_start_idx=None, episode_end_idx=None, current_glo
     if 'action' in batch:
         gt = batch['action'].squeeze(0).cpu().numpy()  # (T_a, D_a)
 
-    # for display, pick last cam1 frame (RGB로 변환된 것 사용)
-    frame = cam1_rgb[-1]  # (H,W,C) 형태
+    # For display: use the last cam1 frame (already converted to RGB)
+    frame = cam1_rgb[-1]  # (H,W,C)
     return obs_np, frame, gt
 
 def setup_data(
@@ -193,10 +193,10 @@ def setup_data(
 ):
     """
     Returns:
-      data_iter: 지정한 episode 부터 읽는 iterator
-      episode_len: 해당 episode의 프레임 수
+      data_iter: Iterator starting at the specified episode.
+      episode_len: Number of frames in the episode.
     """
-    # 1) 전체 dataset & replay_buffer 가져오기
+    # 1) Get the full dataset and replay_buffer
     dataset = GumiDatasetWithFT(
         shape_meta=cfg.shape_meta,
         dataset_path=dataset_path,
@@ -205,25 +205,24 @@ def setup_data(
             'action_pose_repr': cfg.task.pose_repr.action_pose_repr
         }
     )
-    # 각 에피소드 길이 리스트
-    ep_lengths = dataset.replay_buffer.episode_lengths  
+    # Per-episode length list
+    ep_lengths = dataset.replay_buffer.episode_lengths
     print(f"Total episodes in dataset: {len(ep_lengths)}")
-    print(f"Episode lengths: {ep_lengths[:10]}...")  # 처음 10개만 출력
+    print(f"Episode lengths: {ep_lengths[:10]}...")  # print first 10
     assert 0 <= episode_idx < len(ep_lengths), \
         f"episode_idx out of range: must be 0 <= idx < {len(ep_lengths)}"
 
-    # 목표 episode 길이 & 시작 인덱스
+    # Target episode length & start index
     episode_len = ep_lengths[episode_idx]
     start_idx = sum(ep_lengths[:episode_idx])
     end_idx = start_idx + episode_len
     print(f"Target episode {episode_idx}: length={episode_len}, start_idx={start_idx}, end_idx={end_idx}")
 
-    # 2) 전체 데이터셋을 사용하되, 특정 에피소드만 처리하도록 수정
-    # DataLoader iterator 생성 (전체 데이터셋 사용)
+    # Build DataLoader iterator over the full dataset
     loader = DataLoader(dataset, batch_size=1, shuffle=False, pin_memory=True)
     data_iter = iter(loader)
-    
-    # 에피소드 시작 인덱스 저장 (나중에 필터링에 사용)
+
+    # Store episode start/end indices for filtering
     episode_start_idx = start_idx
     episode_end_idx = end_idx
 
@@ -231,7 +230,7 @@ def setup_data(
 
 
 def main():
-    # Command line arguments 파싱
+    # Parse command-line arguments
     parser = argparse.ArgumentParser(description='GUMI dataset multimodal evaluation')
     parser.add_argument('--dataset_path', type=str, 
                        default="/home/ailab-2204/Workspace/gail-umi/data/LanPort_Insertion_0810.zarr",
@@ -261,7 +260,7 @@ def main():
     ckpt_path = args.model_checkpoint_path
     payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
-    cfg.policy.obs_encoder.pretrained = False # pretrained 설정 추가
+    cfg.policy.obs_encoder.pretrained = False  # disable pretrained weights
     cls = hydra.utils.get_class(cfg._target_)
     
     workspace = cls(cfg)
@@ -282,13 +281,13 @@ def main():
     data_iter, episode_len, episode_start_idx, episode_end_idx = setup_data(cfg, dataset_path, episode_idx=args.episode_idx)
     print(f"Episode {args.episode_idx} loaded with {episode_len} frames")
     
-    # 스무딩 파라미터
+    # Smoothing parameters
     smoothing_enabled = args.smoothing
-    filter_type = args.filter_type  # 필터 타입
-    window_size = args.window_size  # 윈도우 크기
-    cutoff_freq = args.cutoff_freq  # Hz (낮을수록 더 부드러워짐)
-    sampling_freq = args.sampling_freq  # Hz (데이터 수집 주파수)
-    pred_scale = args.pred_scale  # 예측값 스케일 팩터
+    filter_type = args.filter_type   # filter type
+    window_size = args.window_size   # window size
+    cutoff_freq = args.cutoff_freq   # Hz (lower = smoother)
+    sampling_freq = args.sampling_freq  # Hz (data collection frequency)
+    pred_scale = args.pred_scale     # prediction scale factor
     
     if pred_scale != 1.0:
         print(f"Prediction scale factor: {pred_scale}")
@@ -297,7 +296,7 @@ def main():
     pred_pos_list, gt_pos_list = [], []
     pred_quat_list, gt_quat_list = [], []
     pred_euler_list, gt_euler_list = [], []
-    pred_gripper_list, gt_gripper_list = [], []  # gripper 리스트 추가
+    pred_gripper_list, gt_gripper_list = [], []  # gripper lists
     cur_pred_pos = np.zeros(3)
     cur_gt_pos   = np.zeros(3)
 
@@ -313,8 +312,8 @@ def main():
             break
 
         # print(">>> raw ft_data:", obs_np['ft_data'].shape)
-        # print(obs_np['ft_data'])  # (T_ft, D_ft) 형태의 넘파이 배열
-        # 전처리 & 예측
+        # print(obs_np['ft_data'])  # Numpy array of shape (T_ft, D_ft)
+        # Preprocess & predict
         obs_dict = get_real_gumi_obs_dict(
             env_obs=obs_np,
             shape_meta=cfg.task.shape_meta,
@@ -329,25 +328,21 @@ def main():
         act10 = res['action_pred'][0].cpu().numpy()
         
         if gt_act is not None:
-            # 예측과 GT의 같은 시점 비교 (첫 번째 스텝)
-            pred_act8 = convert_action_10d_to_8d(act10[0])  # 예측의 첫 번째 스텝
-            gt_act8 = convert_action_10d_to_8d(gt_act[0])   # GT의 첫 번째 스텝
-            
-            # Predicted pos, quat & gripper (스케일 적용)
-            p = pred_act8[:3] * pred_scale  # 위치에 스케일 적용
-            q = pred_act8[3:7]  # 회전은 스케일 적용하지 않음 (정규화된 쿼터니언)
-            gripper_pred = pred_act8[7]  # 그리퍼에 스케일 적용
+            # Compare prediction vs. GT at the same step (first action step)
+            pred_act8 = convert_action_10d_to_8d(act10[0])  # first step of prediction
+            gt_act8 = convert_action_10d_to_8d(gt_act[0])   # first step of GT
+
+            # Predicted pos, quat & gripper (apply scale to position)
+            p = pred_act8[:3] * pred_scale  # scale position
+            q = pred_act8[3:7]  # rotation — do not scale (normalized quaternion)
+            gripper_pred = pred_act8[7]  # gripper
 
             # GT pos, quat & gripper
             g_p = gt_act8[:3]
             g_q = gt_act8[3:7]
             gripper_gt = gt_act8[7]
 
-            # 상대적 액션을 직접 비교 (누적하지 않음)
-            # cur_pred_pos += p
-            # cur_gt_pos   += g_p
-
-            # 쿼터니언 보간
+            # Quaternion SLERP smoothing
             if pred_quat_list:
                 prev_q = pred_quat_list[-1]
                 sm_q = slerp_quaternions(prev_q, q, 0.8)
@@ -355,7 +350,7 @@ def main():
                 sm_q = q
             sm_q = sm_q / np.linalg.norm(sm_q)
 
-            # 리스트에 추가 (상대적 액션 직접 저장)
+            # Append directly (relative actions, not accumulated)
             pred_pos_list.append(p.copy())
             gt_pos_list.append(g_p.copy())
             pred_quat_list.append(sm_q.copy())
@@ -365,14 +360,13 @@ def main():
             pred_gripper_list.append(gripper_pred)
             gt_gripper_list.append(gripper_gt)
 
-        # 화면에 표시
         cv2.imshow('Observation', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cv2.destroyAllWindows()
 
-    # Plot & 저장
+    # Plot & save
     if pred_pos_list:
         pp = np.array(pred_pos_list)
         gp = np.array(gt_pos_list)
@@ -381,11 +375,11 @@ def main():
         pg = np.array(pred_gripper_list)
         gg = np.array(gt_gripper_list)
         
-        # 예측값 스무딩 적용
-        if smoothing_enabled and len(pp) > window_size:  # 최소 window_size 이상의 데이터가 있을 때만 적용
+        # Apply smoothing to predictions
+        if smoothing_enabled and len(pp) > window_size:
             print(f"Applying {filter_type} smoothing with window_size={window_size}")
             
-            # 필터 함수 선택
+            # Choose filter function
             if filter_type == 'moving_avg':
                 filter_func = lambda x: moving_average_filter(x, window_size)
             elif filter_type == 'weighted_avg':
@@ -397,20 +391,20 @@ def main():
             else:
                 filter_func = lambda x: moving_average_filter(x, window_size)
             
-            # 위치 스무딩
+            # Smooth position
             pp_smooth = np.zeros_like(pp)
-            for i in range(3):  # X, Y, Z 각각에 대해
+            for i in range(3):  # X, Y, Z
                 pp_smooth[:, i] = filter_func(pp[:, i])
-            
-            # 회전 스무딩
+
+            # Smooth orientation
             po_smooth = np.zeros_like(po)
-            for i in range(3):  # roll, pitch, yaw 각각에 대해
+            for i in range(3):  # roll, pitch, yaw
                 po_smooth[:, i] = filter_func(po[:, i])
-            
-            # 그리퍼 스무딩
+
+            # Smooth gripper
             pg_smooth = filter_func(pg)
-            
-            # 스무딩된 결과를 원본에 할당
+
+            # Replace with smoothed results
             pp = pp_smooth
             po = po_smooth
             pg = pg_smooth

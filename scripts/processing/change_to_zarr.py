@@ -21,17 +21,17 @@ import time
 
 def compensate_gripping_force_per_episode(all_episodes_ft_data, start_idx=5, end_idx=100):
     """
-    각 에피소드별로 개별적인 gripping force bias 보상
-    각 에피소드의 초기 100개 샘플에서 개별 bias 계산
-    
+    Compute per-episode gripping force bias and subtract it.
+    Bias is estimated from samples [start_idx, end_idx] of each episode.
+
     Args:
-        all_episodes_ft_data: 모든 에피소드의 FT 데이터 리스트 [(ft_data, episode_info), ...]
-        start_idx: bias 계산 시작 인덱스 (기본값: 5)
-        end_idx: bias 계산 끝 인덱스 (기본값: 100)
-    
+        all_episodes_ft_data: List of (ft_data, episode_info) tuples.
+        start_idx: Start index for bias calculation (default: 5).
+        end_idx:   End index for bias calculation (default: 100).
+
     Returns:
-        compensated_ft_data_list: 보상된 FT 데이터 리스트
-        episode_biases: 각 에피소드별 bias 리스트
+        compensated_ft_data_list: Bias-corrected FT data list.
+        episode_biases: Per-episode bias vectors.
     """
     print(f"\n🔧 Per-Episode Gripping Force Compensation")
     print(f"   Bias calculation: samples {start_idx}~{end_idx} per episode")
@@ -45,7 +45,7 @@ def compensate_gripping_force_per_episode(all_episodes_ft_data, start_idx=5, end
             episode_biases.append(None)
             continue
         
-        # 각 에피소드의 초기 구간 추출
+        # Extract initial segment for this episode
         actual_end_idx = min(end_idx, len(ft_data))
         actual_start_idx = min(start_idx, actual_end_idx - 5)
         
@@ -53,14 +53,14 @@ def compensate_gripping_force_per_episode(all_episodes_ft_data, start_idx=5, end
             initial_ft = ft_data[actual_start_idx:actual_end_idx]
             episode_bias = np.mean(initial_ft, axis=0)
             
-            # 해당 에피소드에 bias 적용
+            # Apply bias to this episode
             compensated_ft = ft_data - episode_bias
             compensated_ft_data_list.append((compensated_ft, episode_info))
             episode_biases.append(episode_bias)
             
             print(f"   Episode {episode_info['name']}: bias={episode_bias[:3]}, force_mag={np.linalg.norm(episode_bias[:3]):.4f}")
         else:
-            # 초기 데이터가 부족한 경우 보상하지 않음
+            # Not enough initial data — skip compensation
             compensated_ft_data_list.append((ft_data, episode_info))
             episode_biases.append(None)
             print(f"   Episode {episode_info['name']}: insufficient initial data, no compensation")
@@ -69,20 +69,15 @@ def compensate_gripping_force_per_episode(all_episodes_ft_data, start_idx=5, end
     return compensated_ft_data_list, episode_biases
 
 def load_image_fast(img_path):
-    """
-    빠른 이미지 로딩 - OpenCV 사용 (PIL보다 빠름)
-    """
+    """Fast image loading using OpenCV (faster than PIL). Returns RGB numpy array."""
     img = cv2.imread(img_path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Failed to load image: {img_path}")
-    # BGR -> RGB 변환
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # BGR -> RGB
     return img
 
 def load_images_batch_parallel(image_paths, batch_size=32, max_workers=8):
-    """
-    배치 단위로 이미지를 병렬 로딩
-    """
+    """Load images in parallel batches using ThreadPoolExecutor."""
     if not image_paths:
         return []
     
@@ -95,12 +90,11 @@ def load_images_batch_parallel(image_paths, batch_size=32, max_workers=8):
         for batch_start in range(0, len(image_paths), batch_size):
             batch_paths = image_paths[batch_start:batch_start + batch_size]
             
-            # 병렬로 이미지 로딩
+            # Load images in parallel
             batch_imgs = list(executor.map(load_image_fast, batch_paths))
             batch_array = np.stack(batch_imgs, axis=0)
             all_batches.append(batch_array)
             
-            # 진행상황 출력
             if (batch_start // batch_size + 1) % 10 == 0:
                 elapsed = time.time() - start_time
                 processed = batch_start + len(batch_paths)
@@ -114,13 +108,10 @@ def load_images_batch_parallel(image_paths, batch_size=32, max_workers=8):
 
 def extract_timestamp_from_filename(filename):
     """
-    이미지 파일명에서 타임스탬프 추출
-    예: '20250504_173116_860.jpg' -> datetime 객체
+    Extract a datetime object from an image filename.
+    Example: '20250504_173116_860.jpg' -> datetime object.
     """
-    # 확장자 제거
     base_name = os.path.splitext(filename)[0]
-    
-    # 날짜와 시간 파싱
     parts = base_name.split('_')
     if len(parts) != 3:
         raise ValueError(f"Unexpected filename format: {filename}")
@@ -129,7 +120,7 @@ def extract_timestamp_from_filename(filename):
     time_str = parts[1]
     millisec_str = parts[2]
     
-    # datetime 객체 생성
+    # Create datetime object
     year = int(date_str[0:4])
     month = int(date_str[4:6])
     day = int(date_str[6:8])
@@ -143,17 +134,16 @@ def extract_timestamp_from_filename(filename):
 
 def read_ft_data(episode_dir, episode_number, regenerate_timestamps=False):
     """
-    에피소드 디렉토리에서 FT 데이터 읽기
+    Read F/T data from an episode directory.
     
     Args:
-        episode_dir (str): 에피소드 디렉토리 경로
-        episode_number (int): 에피소드 번호 (참고용)
-        regenerate_timestamps (bool): 타임스탬프 재생성 여부 (기본값: False)
+        episode_dir (str): Path to the episode directory.
+        episode_number (int): Episode number (for logging).
+        regenerate_timestamps (bool): If True, regenerate timestamps at fixed 200 Hz intervals.
         
     Returns:
-        tuple: FT 데이터 배열, FT 타임스탬프 배열
+        tuple: (ft_data array, timestamps array)
     """
-    # ft_data_episode_*.csv 패턴의 파일 찾기
     import glob
     ft_pattern = os.path.join(episode_dir, "ft_data_episode_*.csv")
     ft_files = glob.glob(ft_pattern)
@@ -162,7 +152,7 @@ def read_ft_data(episode_dir, episode_number, regenerate_timestamps=False):
         print(f"Warning: No FT data file found in {episode_dir} (pattern: ft_data_episode_*.csv)")
         return None, None
     
-    # 여러 파일이 있으면 첫 번째 사용
+    # If multiple files exist, use the first one
     ft_csv_path = ft_files[0]
     if len(ft_files) > 1:
         print(f"Warning: Multiple FT files found in {episode_dir}, using {os.path.basename(ft_csv_path)}")
@@ -170,30 +160,25 @@ def read_ft_data(episode_dir, episode_number, regenerate_timestamps=False):
     print(f"Reading FT data from: {os.path.basename(ft_csv_path)}")
     
     try:
-        # CSV 파일 읽기
         df = pd.read_csv(ft_csv_path)
-        # 필요한 열 확인
         if 'timestamp' not in df.columns or regenerate_timestamps:
-            # 타임스탬프 열이 없거나 재생성 요청된 경우, 인덱스 기반 타임스탬프 생성 (200Hz 가정)
+            # Regenerate timestamps at fixed 200 Hz (5 ms intervals)
             print(f"    Regenerating timestamps for episode {episode_number} (200Hz = 5ms intervals)")
-            timestamps = np.arange(len(df)) * 5.0  # 200Hz = 5ms 간격
+            timestamps = np.arange(len(df)) * 5.0  # 200Hz = 5ms interval
         else:
-            # 타임스탬프 처리 - 수정된 버전
             if isinstance(df['timestamp'].iloc[0], str):
-                # 문자열 타임스탬프인 경우, '_'를 제거하고 정수로 변환
-                # 더 안전한 변환을 위해 float64 사용
+                # String timestamps: strip underscores and convert to float64 for precision
                 timestamps = np.array([
                     float(ts.replace('_', '')) 
                     for ts in df['timestamp'].values
-                ], dtype=np.float64)  # float64로 저장하여 정밀도 유지
+                ], dtype=np.float64)  # Store as float64 for precision
             else:
-                # 이미 숫자 타임스탬프인 경우
                 timestamps = df['timestamp'].values.astype(np.float64)
-        
-        # FT 데이터 열 찾기 - 수정된 버전 (timestamp 제외)
+
+        # Locate FT data columns (force_* and torque_*), excluding timestamp
         ft_columns = [col for col in df.columns if col.startswith('force_') or col.startswith('torque_')]
         if len(ft_columns) == 0:
-            # force_, torque_ 패턴을 못 찾은 경우, 숫자 열에서 timestamp 제외하고 찾기
+            # Fallback: use numeric columns excluding timestamp
             numeric_cols = df.select_dtypes(include=np.number).columns
             if 'timestamp' in numeric_cols:
                 numeric_cols = [col for col in numeric_cols if col != 'timestamp']
@@ -201,7 +186,7 @@ def read_ft_data(episode_dir, episode_number, regenerate_timestamps=False):
         
         if len(ft_columns) < 6:
             print(f"Warning: Found fewer than 6 FT columns in {ft_csv_path}: {ft_columns}")
-            # 부족한 열은 0으로 채움
+            # Pad missing columns with zeros
             ft_data = np.zeros((len(df), 6), dtype=np.float32)
             for i, col in enumerate(ft_columns):
                 ft_data[:, i] = df[col].values
@@ -214,36 +199,34 @@ def read_ft_data(episode_dir, episode_number, regenerate_timestamps=False):
         return None, None
 
 def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
-    """에피소드 디렉토리에서 데이터 읽기 - 메모리 효율적 버전"""
+    """Read all data from an episode directory (memory-efficient)."""
     final_pose_path = os.path.join(episode_dir, "pose_data.json")
     if not os.path.isfile(final_pose_path):
         print(f"Warning: Missing pose_data.json in {episode_dir}")
         return None, None, None, None, None, None, None, None
     
-    # 에피소드 번호 추출
     episode_number = os.path.basename(episode_dir).split('_')[-1]
-    
-    # FT 데이터 읽기
+
     ft_data, ft_timestamps = read_ft_data(episode_dir, episode_number, regenerate_timestamps=regenerate_ft_timestamps)
     
     with open(final_pose_path, 'r') as f:
         final_pose_data = json.load(f)
     
-    # 포즈 데이터를 딕셔너리로 변환 (파일명 -> 포즈)
+    # Index pose data by filename for O(1) lookup
     pose_dict = {}
     for pose_entry in final_pose_data:
         pose_dict[pose_entry['image_file']] = pose_entry
     
-    # 두 카메라 이미지 디렉토리 설정
+    # Camera directories
     cam1_dir = os.path.join(episode_dir, "images/handeye")
     cam2_dir = os.path.join(episode_dir, "images/additional_cam")
     
-    # 카메라 1 이미지 파일
+    # Camera 1 image files
     cam1_images = []
     if os.path.isdir(cam1_dir):
         cam1_images = sorted([f for f in os.listdir(cam1_dir) if f.endswith(('.jpg', '.png'))])
     
-    # 카메라 2 이미지 파일
+    # Camera 2 image files
     cam2_images = []
     if os.path.isdir(cam2_dir):
         cam2_images = sorted([f for f in os.listdir(cam2_dir) if f.endswith(('.jpg', '.png'))])
@@ -252,12 +235,12 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
         print(f"Warning: No images found in {cam1_dir}")
         return None, None, None, None, None, None, None, None
     
-    # 이미지 정보만 먼저 수집 (실제 이미지 로드는 나중에)
+    # Collect image info first, defer actual image loading
     image_info = []
     for idx, image_name in enumerate(cam1_images):
         image_path = os.path.join(cam1_dir, image_name)
         
-        # 타임스탬프 추출
+        # Extract timestamp
         try:
             base_name = os.path.splitext(image_name)[0]
             numeric_timestamp = int(base_name.replace('_', ''))
@@ -265,7 +248,7 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
             print(f"Error extracting timestamp from {image_name}: {e}")
             numeric_timestamp = idx
         
-        # 포즈 데이터 여부
+        # Check for pose data
         has_pose = image_name in pose_dict
         
         image_info.append({
@@ -276,7 +259,7 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
             'index': idx
         })
     
-    # 포즈 데이터만 먼저 처리 (이미지 로드 없이)
+    # Process pose data without loading images
     actions, states = [], []
     image_timestamps = []
     last_action = None
@@ -285,25 +268,23 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
         image_name = img_info['name']
         image_timestamps.append(img_info['timestamp'])
         
-        # 포즈 데이터 (모든 이미지에 대해 존재함)
+        # Pose data (exists for all images)
         pose_entry = pose_dict[image_name]
         
-        # 상태 데이터
         position = pose_entry["state"]["position"]
         orientation = pose_entry["state"]["orientation"]
         states.append(np.concatenate([position, orientation]))
-        
-        # 행동 데이터 (그리퍼 상태 포함)
+
+        # Action data (includes gripper state)
         if "action" in pose_entry and pose_entry["action"] is not None:
             rel_position = pose_entry["action"]["relative_position"]
             rel_orientation = pose_entry["action"]["relative_orientation"]
             
-            # 그리퍼 상태 가져오기
-            gripper_state = 1.0  # 기본값 (open)
+            gripper_state = 1.0  # default: open
             if "pose" in pose_entry and "gripper_state" in pose_entry["pose"]:
                 gripper_state = float(pose_entry["pose"]["gripper_state"])
             
-            # 7D + 1D gripper_state = 8D action
+            # 7D action + 1D gripper_state = 8D total
             action = np.concatenate([rel_position, rel_orientation, [gripper_state]])
             actions.append(action)
             last_action = action
@@ -311,28 +292,28 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
             if last_action is not None:
                 actions.append(last_action)
             else:
-                # 액션 데이터가 없는 경우 (첫 번째 프레임)
+                # No action for this frame (first frame edge case)
                 actions.append(np.concatenate([np.zeros(7), [1.0]]))
     
-    # 배열로 변환
+    # Convert to arrays
     actions_array = np.array(actions, dtype=np.float32)
     states_array = np.array(states, dtype=np.float32)
     img_timestamps_array = np.array(image_timestamps, dtype=np.float64)
     
-    # 시작점 기준 상대 자세 계산 (최적화된 버전)
+    # Compute pose relative to the start frame (vectorized where possible)
     if states_array is not None and len(states_array) > 0:
-        start_pos = states_array[0, :3]  # 시작 위치
-        start_ori = states_array[0, 3:]  # 시작 방향 (quaternion)
+        start_pos = states_array[0, :3]  # Starting position
+        start_ori = states_array[0, 3:]  # Starting orientation (quaternion)
         
-        # 시작 회전 객체 한 번만 생성
+        # Create starting rotation object once
         start_rot = R.from_quat(start_ori)
         
         poses_wrt_start = np.zeros((len(states_array), 7), dtype=np.float32)
         
-        # 벡터화된 계산으로 최적화
-        poses_wrt_start[:, :3] = states_array[:, :3] - start_pos  # 상대 위치
+        # Optimized with vectorized calculation
+        poses_wrt_start[:, :3] = states_array[:, :3] - start_pos  # Relative position
         
-        # 회전 계산 (벡터화 불가능하므로 루프 사용, 하지만 최적화)
+        # Rotation calculation (loop as it cannot be fully vectorized, but optimized)
         for i, state in enumerate(states_array):
             curr_ori = state[3:]
             curr_rot = R.from_quat(curr_ori)
@@ -341,7 +322,7 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
     else:
         poses_wrt_start = None
 
-    # 이미지 경로 정보만 반환 (실제 로드는 나중에)
+    # Return image paths only (load later to save memory)
     cam1_image_paths = [img_info['path'] for img_info in image_info]
     cam2_image_paths = []
     if cam2_images:
@@ -353,46 +334,42 @@ def read_episode_data(episode_dir, regenerate_ft_timestamps=False):
 
 def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping_force=False, gripping_start_idx=10, gripping_end_idx=1000, batch_size=32, max_workers=8, compression_level=3, regenerate_ft_timestamps=False):
     """
-    모든 에피소드의 데이터를 단일 Zarr 파일로 저장
-    두 카메라 이미지, 행동, 상태, FT 데이터, 타임스탬프 포함
+    Save all episode data to a single Zarr file.
+    Includes images from both cameras, actions, states, F/T data, and timestamps.
     
     Args:
-        data_root (str): 에피소드 디렉토리들이 있는 루트 경로
-        output_path (str): Zarr 파일 경로
-        ema_normalize (bool): FT 데이터에 EMA normalize 적용 여부 (기본값: True)
-        compensate_gripping_force (bool): Gripping force bias 보상 여부 (기본값: False)
-        gripping_start_idx (int): Gripping bias 계산 시작 인덱스 (기본값: 10)
-        gripping_end_idx (int): Gripping bias 계산 끝 인덱스 (기본값: 1000)
+        data_root (str): Root directory containing episode subdirectories.
+        output_path (str): Path for the output .zarr file.
+        ema_normalize (bool): Apply EMA normalization to FT data (default: True).
+        compensate_gripping_force (bool): Subtract per-episode gripping force bias.
+        gripping_start_idx (int): Start index for gripping bias window.
+        gripping_end_idx (int): End index for gripping bias window.
+        batch_size (int): Batch size for parallel image loading.
+        max_workers (int): Number of parallel workers for image loading.
+        compression_level (int): Zarr compression level (1-5).
+        regenerate_ft_timestamps (bool): If True, regenerate FT timestamps.
     """
-    # 입력 경로와 출력 경로 정규화
     data_root = os.path.abspath(data_root)
     output_path = os.path.abspath(output_path)
-    
-    # 안전성 검사
-    print(f"🔍 Safety checks:")
+
+    print(f"Safety checks:")
     print(f"   Input data path: {data_root}")
     print(f"   Output zarr path: {output_path}")
     
-    # 1. 출력 경로가 .zarr로 끝나는지 확인
     if not output_path.endswith('.zarr'):
         raise ValueError(f"❌ Output path must end with '.zarr' extension. Got: {output_path}")
     
-    # 2. 출력 경로가 입력 경로와 정확히 같은지 확인 (덮어쓰기 방지)
     if output_path == data_root:
         raise ValueError(f"❌ Output path cannot be the same as input data path. This would overwrite your source data!")
     
-    # 3. 출력 경로가 입력 경로 내부에 있는지 확인
     if output_path.startswith(data_root + os.sep):
         raise ValueError(f"❌ Output path cannot be inside the input data directory. This could cause conflicts!")
     
-    # 4. 입력 디렉토리가 존재하는지 확인
     if not os.path.exists(data_root):
         raise ValueError(f"❌ Input data directory does not exist: {data_root}")
     
-    # 5. 출력 디렉토리가 이미 존재하는 경우 경고
     if os.path.exists(output_path):
-        print(f"⚠️  Warning: Output path already exists and will be overwritten: {output_path}")
-        # 사용자 확인을 위한 추가 정보
+        print(f"Warning: Output path already exists and will be overwritten: {output_path}")
         if os.path.isdir(output_path):
             try:
                 files_count = len(os.listdir(output_path))
@@ -402,15 +379,15 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
     
     print(f"✅ Safety checks passed\n")
     
-    # Zarr 그룹 생성
+    # Create Zarr groups
     store = zarr.DirectoryStore(output_path)
     root = zarr.group(store, overwrite=True)
     
-    # 데이터 그룹 생성
+    # Create data groups
     data_group = root.require_group('data')
     meta_group = root.require_group('meta')
     
-    # 에피소드 디렉토리 목록
+    # Episode directories list
     episode_dirs = sorted(
         [os.path.join(data_root, d) for d in os.listdir(data_root) if os.path.isdir(os.path.join(data_root, d))]
     )
@@ -418,7 +395,6 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
     if not episode_dirs:
         raise ValueError("No episode directories found")
     
-    # 모든 에피소드 데이터 로드
     all_episode_data = []
     episode_biases = None
     
@@ -426,7 +402,7 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         print(f"🔧 Gripping force compensation enabled")
         print(f"   Bias calculation: samples {gripping_start_idx}~{gripping_end_idx}")
         
-        # 모든 에피소드 로드 및 FT 데이터 수집
+        # Load all episodes and collect FT data
         all_episodes_ft_data = []
         
         for i, episode_dir in enumerate(episode_dirs):
@@ -434,69 +410,69 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
             episode_data = read_episode_data(episode_dir, regenerate_ft_timestamps=regenerate_ft_timestamps)
             all_episode_data.append((episode_data, episode_dir))
             
-            # FT 데이터 추출
+            # Extract FT data
             cam1_image_paths, cam2_image_paths, actions, states, ft_data, img_timestamps, ft_timestamps, poses_wrt_start = episode_data
             if ft_data is not None:
-                ft_data_feats = ft_data  # 모든 6개 축 포함 (force_x, force_y, force_z, torque_x, torque_y, torque_z)
+                ft_data_feats = ft_data  # Includes all 6 axes (force_x, force_y, force_z, torque_x, torque_y, torque_z)
                 episode_info = {'name': os.path.basename(episode_dir)}
                 all_episodes_ft_data.append((ft_data_feats, episode_info))
             else:
                 all_episodes_ft_data.append((None, {'name': os.path.basename(episode_dir)}))
-        
-        # bias 계산 및 보상 적용 (각 에피소드별)
+
+        # Compute and apply per-episode biases
         compensated_ft_data_list, episode_biases = compensate_gripping_force_per_episode(
             all_episodes_ft_data, 
             start_idx=gripping_start_idx, 
             end_idx=gripping_end_idx
         )
         
-        # 보상된 FT 데이터를 원본 데이터에 적용
+        # Apply compensated FT data to the original data
         for i, ((ft_data_compensated, _), (episode_data, episode_dir)) in enumerate(zip(compensated_ft_data_list, all_episode_data)):
             cam1_image_paths, cam2_image_paths, actions, states, original_ft_data, img_timestamps, ft_timestamps, poses_wrt_start = episode_data
             if ft_data_compensated is not None:
-                # 모든 6개 축에 대해 보상 적용
+                # Apply compensation to all 6 axes
                 compensated_full_ft = ft_data_compensated
                 all_episode_data[i] = ((cam1_image_paths, cam2_image_paths, actions, states, compensated_full_ft, img_timestamps, ft_timestamps, poses_wrt_start), episode_dir)
     else:
-        # 일반 로드
+        # Standard load (no compensation)
         for i, episode_dir in enumerate(episode_dirs):
             print(f"Loading episode {i+1}/{len(episode_dirs)}: {os.path.basename(episode_dir)}")
             episode_data = read_episode_data(episode_dir, regenerate_ft_timestamps=regenerate_ft_timestamps)
             all_episode_data.append((episode_data, episode_dir))
     
-    # 샘플 에피소드에서 차원 정보 가져오기
+    # Get dimension information from a sample episode
     sample_episode_data, _ = all_episode_data[0]
     sample_cam1_paths, sample_cam2_paths, _, _, sample_ft, _, _, _ = sample_episode_data
     if sample_cam1_paths is None or len(sample_cam1_paths) == 0:
         raise ValueError("Could not read sample episode data")
     
-    # 첫 번째 이미지를 로드해서 차원 정보 가져오기
+    # Load the first image to get dimension information
     sample_img = load_image_fast(sample_cam1_paths[0])
     height, width, channels = sample_img.shape
     
-    # 샘플 FT 데이터 차원 확인
-    ft_dim = 6  # 기본값
+    # Check sample FT data dimension
+    ft_dim = 6  # default: 6 axes (fx fy fz tx ty tz)
     
-    # 데이터셋 초기화 - 카메라 1 이미지 (압축 레벨 낮춤으로 속도 향상)
+    # Initialize dataset - Camera 1 images (lower compression level for speed)
     cam1_dataset = data_group.require_dataset(
         "handeye_cam_1",
         shape=(0, height, width, channels),
-        chunks=(batch_size, height, width, channels),  # 배치 크기에 맞춤
+        chunks=(batch_size, height, width, channels),  # Align with batch size
         dtype=np.uint8,
-        compressor=Blosc(cname='zstd', clevel=compression_level)  # 압축 레벨 설정
+        compressor=Blosc(cname='zstd', clevel=compression_level)  # Set compression level
     )
     
-    # 카메라 2 이미지 (존재하는 경우)
+    # Camera 2 dataset (if available)
     if sample_cam2_paths and len(sample_cam2_paths) > 0:
-        # 첫 번째 이미지를 로드해서 차원 정보 가져오기
+        # Load the first image to get dimension information
         sample_cam2_img = load_image_fast(sample_cam2_paths[0])
         cam2_height, cam2_width, cam2_channels = sample_cam2_img.shape
         cam2_dataset = data_group.require_dataset(
             "handeye_cam_2",
             shape=(0, cam2_height, cam2_width, cam2_channels),
-            chunks=(batch_size, cam2_height, cam2_width, cam2_channels),  # 배치 크기에 맞춤
+            chunks=(batch_size, cam2_height, cam2_width, cam2_channels),  # Align with batch size
             dtype=np.uint8,
-            compressor=Blosc(cname='zstd', clevel=compression_level)  # 압축 레벨 설정
+            compressor=Blosc(cname='zstd', clevel=compression_level)  # Set compression level
         )
     else:
         cam2_dataset = None
@@ -509,7 +485,7 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         compressor=Blosc(cname='zstd', clevel=5)
     )
     
-    # 기존 state는 그대로 유지
+    # State dataset (position + orientation)
     state_dataset = data_group.require_dataset(
         "state",
         shape=(0, 7),  # position(3) + orientation(4)
@@ -518,7 +494,7 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         compressor=Blosc(cname='zstd', clevel=5)
     )
 
-    # 시작점 기준 상대 자세를 위한 새로운 데이터셋
+    # Pose-wrt-start dataset
     pose_wrt_start_dataset = data_group.require_dataset(
         "pose_wrt_start",
         shape=(0, 7),  # relative_position(3) + relative_orientation(4)
@@ -527,7 +503,7 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         compressor=Blosc(cname='zstd', clevel=5)
     )
     
-    # FT 데이터셋 초기화
+    # F/T dataset
     ft_dataset = data_group.require_dataset(
         "ft_data",
         shape=(0, ft_dim),
@@ -552,16 +528,16 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         compressor=Blosc(cname='zstd', clevel=5)
     )
     
-    # 에피소드 경계 정보
+    # Episode boundary arrays
     episode_ends = meta_group.zeros("episode_ends", shape=(0,), dtype=np.int64)
     episode_img_ends = meta_group.zeros("episode_img_ends", shape=(0,), dtype=np.int64)
     episode_ft_ends = meta_group.zeros("episode_ft_ends", shape=(0,), dtype=np.int64)
     
-    # 총 단계 수 초기화
+    # Initialize total steps
     total_img_steps = 0
     total_ft_steps = 0
     
-    # 각 에피소드 처리 - 메모리 효율적 버전
+    # Process each episode - memory-efficient version
     for i, (episode_data, episode_dir) in enumerate(all_episode_data):
         print(f"Processing episode {i+1}/{len(all_episode_data)}: {os.path.basename(episode_dir)}")
         
@@ -575,27 +551,27 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         if cam2_image_paths:
             print(f"  - Camera 2 images: {len(cam2_image_paths)}")
         
-        # 행동, 상태 데이터 저장 (이미지 로드 없이)
+        # Save actions, states, and timestamps (no image loading yet)
         action_dataset.append(actions)
         state_dataset.append(states)
         if poses_wrt_start is not None:
             pose_wrt_start_dataset.append(poses_wrt_start)
         img_timestamps_dataset.append(img_timestamps)
         
-        # 카메라 1 이미지 - 배치 단위로 병렬 로딩 및 저장
+        # Camera 1: load and save in parallel batches
         print(f"  - Loading camera 1 images...")
         cam1_batches = load_images_batch_parallel(cam1_image_paths, batch_size=batch_size, max_workers=max_workers)
         for batch in cam1_batches:
             cam1_dataset.append(batch)
         
-        # 카메라 2 이미지 - 배치 단위로 병렬 로딩 및 저장 (존재하는 경우)
+        # Camera 2: load and save in parallel batches (if available)
         if cam2_image_paths and cam2_dataset is not None:
             print(f"  - Loading camera 2 images...")
             cam2_batches = load_images_batch_parallel(cam2_image_paths, batch_size=batch_size, max_workers=max_workers)
             for batch in cam2_batches:
                 cam2_dataset.append(batch)
         
-        # 이미지 경계 업데이트
+        # Update image episode boundary
         total_img_steps += len(cam1_image_paths)
         episode_img_ends.resize(episode_img_ends.shape[0] + 1)
         episode_img_ends[-1] = total_img_steps
@@ -606,37 +582,36 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
         if ft_data is not None and ft_timestamps is not None:
             print(f"  - FT data: {ft_data.shape}, Timestamps: {len(ft_timestamps)}")
             
-            # FT 데이터가 6개 열이면 그대로 사용, 아니면 첫 6개 열만 사용
+            # Trim/pad FT to exactly 6 columns
             if ft_data.shape[1] >= 6:
                 ft_to_save = ft_data[:, :6]  # 첫 6개 열만 사용
             else:
-                # 부족한 열은 0으로 패딩
+                # Pad with zeros if fewer than 6 columns
                 ft_to_save = np.zeros((ft_data.shape[0], 6), dtype=np.float32)
                 ft_to_save[:, :ft_data.shape[1]] = ft_data
             
             print(f"  - FT data saved: {ft_to_save.shape}")
             
-            # 선택된 FT 데이터 저장
             ft_dataset.append(ft_to_save)
             ft_timestamps_dataset.append(ft_timestamps)
-            
-            # FT 경계 업데이트
+
+            # Update F/T episode boundary
             total_ft_steps += len(ft_data)
             episode_ft_ends.resize(episode_ft_ends.shape[0] + 1)
             episode_ft_ends[-1] = total_ft_steps
             
         else:
             print(f"  - No FT data available for this episode")
-            # FT 데이터가 없는 경우에도 경계 업데이트 (이전 값과 동일하게)
+            # No FT data: extend boundary array with previous value
             episode_ft_ends.resize(episode_ft_ends.shape[0] + 1)
             episode_ft_ends[-1] = total_ft_steps
     
-    # 메타데이터에 추가 정보 저장
+    # Save metadata
     meta_group.attrs['total_img_steps'] = total_img_steps
     meta_group.attrs['total_ft_steps'] = total_ft_steps
     meta_group.attrs['episodes'] = len(episode_dirs)
     
-    # Episode biases 저장 (적용된 경우)
+    # Save episode gripping biases if computed
     if episode_biases is not None and any(b is not None for b in episode_biases):
         meta_group.attrs['episode_gripping_biases'] = [b.tolist() if b is not None else None for b in episode_biases]
         print(f"✅ Per-episode gripping biases saved to metadata")
@@ -646,7 +621,6 @@ def save_to_zarr(data_root, output_path, ema_normalize=True, compensate_gripping
     print(f"Episodes: {len(episode_dirs)}")
 
 if __name__ == "__main__":
-    # 커맨드 라인 인자 파싱
     parser = argparse.ArgumentParser(
         description='Convert data to Zarr format with FT data and timestamps',
         epilog='⚠️  IMPORTANT: Output path MUST end with .zarr extension to prevent overwriting source data!'
@@ -657,14 +631,14 @@ if __name__ == "__main__":
                       help='Path for the output Zarr file (MUST end with .zarr, e.g., data/output_dataset.zarr)')
     parser.add_argument('--no-ema-normalize', action='store_true',
                       help='Disable EMA normalization for FT data (use raw FT values)')
-    # Gripping force compensation 관련 인자들
+    # Gripping force compensation arguments
     parser.add_argument('--disable-gripping-compensation', action='store_true',
                       help='Disable gripping force bias compensation (enabled by default)')
     parser.add_argument('--gripping-start-idx', type=int, default=5,
                       help='Start index for gripping bias calculation (default: 5)')
     parser.add_argument('--gripping-end-idx', type=int, default=100,
                       help='End index for gripping bias calculation (default: 100)')
-    # 최적화 관련 인자들
+    # Performance tuning arguments
     parser.add_argument('--batch-size', type=int, default=32,
                       help='Batch size for image loading (default: 32)')
     parser.add_argument('--max-workers', type=int, default=8,
@@ -675,12 +649,11 @@ if __name__ == "__main__":
                       help='Regenerate FT timestamps with regular 5ms intervals (fixes timestamp anomalies)')
     args = parser.parse_args()
 
-    # 추가 입력 검증
     print("="*60)
-    print("🔄 Starting Zarr conversion process")
+    print("Starting Zarr conversion process")
     print("="*60)
-    
-    # 출력 경로 사전 검증 (save_to_zarr 함수 호출 전에)
+
+    # Pre-validate output path before calling save_to_zarr
     if not args.output_path.endswith('.zarr'):
         print(f"❌ ERROR: Output path must end with '.zarr' extension!")
         print(f"   You provided: {args.output_path}")
@@ -688,7 +661,7 @@ if __name__ == "__main__":
         print(f"   This prevents accidentally overwriting your source data directory.")
         exit(1)
     
-    # 경로가 같은지 미리 확인 (정확히 같은 경우만 방지)
+    # Pre-validate that input and output are not the same path
     input_abs = os.path.abspath(args.data_path)
     output_abs = os.path.abspath(args.output_path)
     if output_abs == input_abs:
@@ -698,10 +671,10 @@ if __name__ == "__main__":
         print(f"   Please choose a different output path (e.g., {input_abs}.zarr).")
         exit(1)
 
-    # EMA normalize 옵션 (--no-ema-normalize가 주어지면 False, 아니면 True)
+    # EMA normalize option
     ema_normalize = not args.no_ema_normalize
-    
-    # Gripping force compensation 옵션 (--disable-gripping-compensation가 주어지면 False, 아니면 True)
+
+    # Gripping force compensation option
     compensate_gripping_force = not args.disable_gripping_compensation
     
     print(f"🎛️ EMA Normalize: {'Enabled' if ema_normalize else 'Disabled (Raw FT data)'}")
@@ -716,7 +689,7 @@ if __name__ == "__main__":
     print(f"   - Max workers: {args.max_workers}")
     print(f"   - Compression level: {args.compression_level}")
 
-    # Zarr로 저장
+    # Run conversion
     try:
         save_to_zarr(
             data_root=args.data_path, 

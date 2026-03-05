@@ -23,28 +23,28 @@ class AidinFTSensorUDP:
         self.running = False
         self.thread = None
         
-        # 명령어
+        # Command bytes
         self.CMD_START = bytes([0x00, 0x03, 0x02])
         self.CMD_STOP = bytes([0x00, 0x03, 0x03])
         self.CMD_BIAS = bytes([0x00, 0x03, 0x04])
         self.DATA_SIZE = 52
         
-        # Hz 측정용
+        # For Hz measurement
         self.packet_count = 0
         self.start_time = None
         
     def connect(self):
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # 소켓 버퍼 크기 늘리기 (1MB)
+            # Increase socket receive buffer size (1 MB)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
             self.socket.settimeout(5.0)
             self.socket.bind(('', 0))
             self.connected = True
-            print(f"FT 센서 연결됨: {self.sensor_ip}:{self.sensor_port}")
+            print(f"FT sensor connected: {self.sensor_ip}:{self.sensor_port}")
             return True
         except Exception as e:
-            print(f"연결 실패: {e}")
+            print(f"Connection failed: {e}")
             self.connected = False
             return False
     
@@ -65,15 +65,15 @@ class AidinFTSensorUDP:
             return False
     
     def start_transmit(self):
-        """전송 모드 시작"""
+        """Start transmit mode."""
         return self.send_command(self.CMD_START)
-    
+
     def stop_transmit(self):
-        """전송 모드 정지"""
+        """Stop transmit mode."""
         return self.send_command(self.CMD_STOP)
-    
+
     def bias_mode(self):
-        """바이어스 모드"""
+        """Enter bias mode."""
         return self.send_command(self.CMD_BIAS)
     
     def parse_data(self, raw_data):
@@ -116,7 +116,7 @@ class AidinFTSensorUDP:
     def start_streaming(self):
         if not self.connected:
             return False
-        # 혹시 모를 스트리밍 강제 종료 및 안정화
+        # Stop any running stream first and allow the sensor to stabilize
         self.stop_transmit()
         time.sleep(0.2)
         if not self.start_transmit():
@@ -148,7 +148,7 @@ class AidinFTSensorUDP:
         return None
     
     def get_hz(self):
-        """현재 수신 주파수 계산"""
+        """Calculate the current receive frequency."""
         if self.start_time is None or self.packet_count == 0:
             return 0.0
         elapsed = time.time() - self.start_time
@@ -157,62 +157,62 @@ class AidinFTSensorUDP:
         return 0.0
     
     def print_current_ft(self):
-        """현재 FT 값을 간단히 출력"""
+        """Print the latest FT values."""
         ft = self.get_force_torque()
         hz = self.get_hz()
         if ft is not None:
             print(f"FT: {ft.round(2)} | {hz:.1f} Hz")
         else:
-            print(f"FT: 데이터 없음 | {hz:.1f} Hz")
+            print(f"FT: no data | {hz:.1f} Hz")
     
     def clear_buffer(self):
         with self.lock:
             self.data_buffer.clear()
     
     def __enter__(self):
-        """Context manager 진입"""
+        """Context manager entry."""
         self.connect()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager 종료"""
+        """Context manager exit."""
         self.disconnect()
 
 
-# 사용 예제
+# Usage example
 if __name__ == "__main__":
-    print("=== FT 센서 테스트 ===")
-    
-    # FT 센서 테스트
+    print("=== FT Sensor Test ===")
+
+    # FT sensor test
     with AidinFTSensorUDP(
         sensor_ip='172.27.190.4', 
         sensor_port=8890 #8890, 50000
     ) as ft_sensor:
-        if ft_sensor.connected:
-            print("연결 성공! 스트리밍 시작...")
-            ft_sensor.bias_mode()
-            time.sleep(1)
-            
-            if ft_sensor.start_streaming():
-                try:
-                    print("FT 데이터 수신 중... (Ctrl+C로 종료)")
-                    print("-" * 60)
-                    
-                    for i in range(200):
-                        time.sleep(0.1)
-                        
-                        if i % 10 == 0:  # 1초마다 출력
-                            print(f"[{i//10:2d}s] ", end="")
-                            ft_sensor.print_current_ft()
-                    
-                    # 최종 Hz 출력
-                    final_hz = ft_sensor.get_hz()
-                    print(f"\n평균 수신 주파수: {final_hz:.1f} Hz")
-                
-                except KeyboardInterrupt:
-                    print("\n종료됨")
+            if ft_sensor.connected:
+                print("Connection successful! Starting streaming...")
+                ft_sensor.bias_mode()
+                time.sleep(1)
+
+                if ft_sensor.start_streaming():
+                    try:
+                        print("Receiving FT data... (Ctrl+C to exit)")
+                        print("-" * 60)
+
+                        for i in range(200):
+                            time.sleep(0.1)
+
+                            if i % 10 == 0:  # print every 1 second
+                                print(f"[{i//10:2d}s] ", end="")
+                                ft_sensor.print_current_ft()
+
+                        # Final Hz report
+                        final_hz = ft_sensor.get_hz()
+                        print(f"\nAverage receive frequency: {final_hz:.1f} Hz")
+
+                    except KeyboardInterrupt:
+                        print("\nStopped.")
                 
                 finally:
                     ft_sensor.stop_streaming()
         else:
-            print("연결 실패")
+            print("Connection failed")

@@ -4,7 +4,7 @@
 camera:
   main_camera:
     name: 'wrist_1'
-    serial_number: '241122306040' #241122306040, 339522300864
+    serial_number: '241122306040'
     resolution: [1280, 800]
     fps: 30
   additional_camera:
@@ -17,9 +17,8 @@ camera:
 robot:
   server_ip: '172.27.190.125'
   server_port: 4999
-  initial_pose: [0.48, 0.01, -0.05, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
+  initial_pose: [0.48, -0.02, 0.14, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
   random_pos_range: 0.02
-
   max_pos_speed: 0.7  # m/s
   max_rot_speed: 0.7  # rad/s
   initial_tilt_axis: 'y'
@@ -38,10 +37,11 @@ image:
 
 # Action processing
 action:
-  position_xy_scale: 3 # image only 0.5, lowdim 0.1
-  position_z_scale: 3 # image only 0.5, lowdim 0.1
+  position_xy_scale: 2 # image only 0.5, lowdim 0.1
+  position_z_scale: 2 # image only 0.5, lowdim 0.1
   rotation_xy_scale: 2  # X,Y axis rotation scaling
   rotation_z_scale: 2 # Z axis rotation scaling
+
 
 # FT sensor settings
 ft_sensor:
@@ -64,10 +64,10 @@ gravity_compensator:
 # Gripper control
 gripper:
   history_length: 5
-  close_threshold: 0.2  # predicted < 0.1 for close signal
-  open_threshold: 0.9   # predicted >= 0.9 for open signal
-  close_count_threshold: 3  # minimum close signals in history
-  open_count_threshold: 4   # minimum open signals in history
+  close_threshold: 0.2 
+  open_threshold: 0.9 
+  close_count_threshold: 3  
+  open_count_threshold: 4
   http_port: 5000
 
 # Model settings
@@ -82,8 +82,6 @@ coordinate_transform:
           [0, 0, -1]
   ]
 
-  # 회전 매핑: 오른손 좌표계를 유지하는 정규 회전(det=+1)
-  # z축 반전 없이 xy 교환(+90deg z-회전)
   R_mat_rot : [
           [0, 1, 0],
           [-1, 0, 0],
@@ -99,5 +97,6 @@ visualization:
 paths:
   output_video: 'output.mp4'
   
-  # Best
-  model_checkpoint: "/home/ailab-2204/Workspace/ManipForce/outputs/gear_ods3_gear/checkpoints/epoch=0449-val_action_error=0.00069.ckpt"
+  # Specify the path to your trained model checkpoint (.ckpt)
+  # Example: "checkpoints/your_model.ckpt"
+  model_checkpoint: null

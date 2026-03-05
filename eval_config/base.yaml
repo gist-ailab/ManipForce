@@ -4,7 +4,7 @@
 camera:
   main_camera:
     name: 'wrist_1'
-    serial_number: '241122306040' #241122306040, 339522300864
+    serial_number: '241122306040'
     resolution: [1280, 800]
     fps: 30
   additional_camera:
@@ -17,11 +17,6 @@ camera:
 robot:
   server_ip: '172.27.190.125'
   server_port: 4999
-  # Drawing
-  # initial_pose: [0.5688784, -0.03900478, 0.05, 1, 0,0,0]
-  # Lan Insertion
-  # initial_pose: [0.54, -0.01, 0.13, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
-  # Gear Insertion
   initial_pose: [0.49, -0.02, 0.12, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
   max_pos_speed: 0.5  # m/s
   max_rot_speed: 0.5  # rad/s
@@ -48,7 +43,7 @@ action:
 ft_sensor:
   rate_hz: 200.0
   buffer_length: 10  # FT_RING_LEN
-  filter_alpha: 0.3  # 0.1~0.5 권장, 작을수록 더 부드러움
+  filter_alpha: 0.3  # 0.1~0.5
   obs_horizon: 8  # FT_OBS_HORIZON
   calibration_samples: 200
 
