@@ -28,30 +28,27 @@ python checkpoints/prepare_dinov2.py
 ## 📡 Data Collection & Processing
 ```bash
 # Step 1: Capture multimodal data
-python scripts/collection/capture_multimodal_data_adv.py --data_path data/260210 --add_cam
+python scripts/collection/capture_multimodal_data.py --data_path data/<your_task> --add_cam
 
 # Step 2: Synchronize multi-camera images
-python scripts/collection/align_multimodal_data.py --data_path data/260210
+python scripts/collection/align_multimodal_data.py --data_path data/<your_task>
 
 # Step 3: Estimate wrist marker pose
-python scripts/processing/get_wrist_pose_adv.py --data_path data/260210 --visualize --add_cam
+python scripts/processing/get_wrist_pose.py --data_path data/<your_task> --visualize
 
 # Step 4: Refine pose with filtering and interpolation
-python scripts/processing/pose_refinement.py --data_path data/260210
+python scripts/processing/pose_refinement.py --data_path data/<your_task>
 
 # Step 5: Convert processed data to Zarr format
-python scripts/processing/change_to_zarr.py --data_path data/260210 --output_path data/260210.zarr
+python scripts/processing/change_to_zarr.py --data_path data/<your_task> --output_path data/<your_task>.zarr
 ```
 
 
 ## 🏋️ Training
 Our method supports different observation down-sampling steps.
 ```bash
-# For tasks requiring high precision (obs_down_sample_steps=2), e.g., LAN Insertion
-python scripts/launch.py --gpu 0 --config manipforce_ods2_256x256 --dataset lanport
-
-# For other tasks (obs_down_sample_steps=3)
-python scripts/launch.py --gpu 0 --config manipforce_ods3_256x256 --dataset lanport
+# Provide a predefined key or a direct path to a .zarr dataset
+python scripts/launch.py --gpu 0 --config manipforce_ods3_256x256 --dataset data/your_task.zarr
 ```
 
 ## 🤖 Evaluation
@@ -63,5 +60,5 @@ python scripts/eval/eval_robot.py --config_path "eval_config/gear_insertion.yaml
 | Argument | Description | Default |
 |----------|-------------|---------|
 | `--gpu` | GPU ID to use for training. | `0` |
-| `--config` | Hydra configuration file name (with or without `.yaml`). | `manipforce_ods2_256x256` |
-| `--dataset` | Dataset key name defined in `scripts/launch.py` (e.g., `lanport`). | `lanport` |
+| `--config` | Hydra configuration file name (with or without `.yaml`). | `manipforce_ods3_256x256` |
+| `--dataset` | Predefined key (e.g., `gear`, `battery`) or a direct path to a `.zarr` file. | Required |

@@ -13,7 +13,7 @@ import hydra.utils
 import os
 import json
 import matplotlib.pyplot as plt
-from scipy.spatial.transform import Rotation  # 추가
+from scipy.spatial.transform import Rotation  # added
 import socket
 import click
 from typing import Optional, Dict, Any
@@ -26,43 +26,26 @@ from utils.real_inference_util import (get_real_gumi_obs_dict,
                                        get_real_gumi_action)
 from utils.franka_api import FrankaAPI
 
-# 전역 변수 선언
+# Global variables
 prev_frames = []
 prev_timestamps = []
 current_img_idx = 0
-BASE_DIR = None  # ← 설정에서 주입받을 데이터셋 경로
+BASE_DIR = None
 
 
 def transform_pose(pos, quat, current_ee_pose):
     """
-    Position과 Quaternion을 새로운 좌표계로 변환
+    Transform position and quaternion into a new coordinate frame.
     pose: [px, py, pz, qw, qx, qy, qz]
     return: transformed [px, py, pz, qw, qx, qy, qz]
     """
 
-    # # Don't change this (pushing, trajectory following)
-    # R_mat = np.array([
-    #     [ 0,  0, -1],  # x_robot = -z_original
-    #     [ 1,  0,  0],  # y_robot =  x_original
-    #     [ 0,  1,  0]   # z_robot =  y_original
-    # ])
-    
-
-    # R_mat_trans = np.array([
-    #         [0, 0, -1],   # new_x = 0*ox + 1*oy + 0*oz
-    #         [1, 0, 0],   # new_y = 1*ox + 0*oy + 0*oz
-    #         [0, -1, 0]   # new_z = 0*ox + 0*oy + -1*oz
-    #     ])
-
-    # 위치 매핑: (사용자 변경값 유지)
     R_mat_pos = np.array([
             [0, 1, 0],
             [1, 0, 0],
             [0, 0, -1]
         ])
 
-    # 회전 매핑: 오른손 좌표계를 유지하는 정규 회전(det=+1)
-    # z축 반전 없이 xy 교환(+90deg z-회전)
     R_mat_rot = np.array([
             [0, 1, 0],
             [-1, 0, 0],
@@ -77,9 +60,9 @@ def transform_pose(pos, quat, current_ee_pose):
     R_new  = R_mat_rot @ R_orig @ R_mat_rot.T
     rel_quat = Rotation.from_matrix(R_new).as_quat()
 
-    # 현재 EE의 orientation을 반영
+    # Apply the current EE orientation
     current_quat = current_ee_pose[3:]  # [w, x, y, z]
-    current_quat = np.roll(current_quat, -1)  # [x, y, z, w]로 변환
+    current_quat = np.roll(current_quat, -1)  # convert to [x, y, z, w]
     current_rot = Rotation.from_quat(current_quat)
     world_rel_pos = current_rot.inv().apply(rel_pos)
 
@@ -101,12 +84,12 @@ def convert_action_10d_to_8d(action_10d):
 
     rotation_matrix = np.stack([first_col, second_col, third_col], axis=-1)
     from scipy.spatial.transform import Rotation as R
-    quat = R.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w] 순서
-    # 7D 벡터로 조합
+    quat = R.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w] order
+    # Combine into an 8D action vector
     action_8d = np.concatenate([
-        position,    # 위치 (3)
-        quat,       # 쿼터니언 (4)
-        gripper     # 그리퍼 (1)
+        position,    # position (3)
+        quat,        # quaternion (4)
+        gripper      # gripper (1)
     ], axis=-1)
     
     return action_8d
@@ -121,13 +104,13 @@ def get_obs():
     image_dir = os.path.join(base_dir, 'images/handeye')
     pose_tracking_dir = os.path.join(base_dir, 'images/pose_tracking')
     
-    # GT 데이터 로드
+    # Load GT data
     if not hasattr(get_obs, 'action_gt_data'):
         with open(os.path.join(base_dir, 'pose_data.json'), 'r') as f:
             get_obs.action_gt_data = json.load(f)
-            print(f"전체 GT 데이터 개수: {len(get_obs.action_gt_data)}")
-    
-    # 이미지 파일 목록 가져오기
+            print(f"Total GT data entries: {len(get_obs.action_gt_data)}")
+
+    # Get list of image files
     image_files = sorted([
         f for f in os.listdir(image_dir)
         if f.lower().endswith(('.png', '.jpg', '.jpeg'))
@@ -140,46 +123,46 @@ def get_obs():
     if current_img_idx >= len(image_files):
         return None, None, None
     
-    # 버퍼가 비어있으면 초기화
+    # Initialise buffer if empty
     if len(prev_frames) == 0:
         for _ in range(n_obs_steps):
             if current_img_idx >= len(image_files):
                 return None, None, None
-            
+
             img_path = os.path.join(image_dir, image_files[current_img_idx])
             frame = cv2.imread(img_path)
             if frame is None:
-                raise RuntimeError(f"이미지를 읽을 수 없습니다: {img_path}")
+                raise RuntimeError(f"Cannot read image: {img_path}")
             
             prev_frames.append(frame)
             prev_timestamps.append(time.time())
             current_img_idx += 1
     
-    # 현재 이미지 로드
+    # Load current image
     img_path = os.path.join(image_dir, image_files[current_img_idx])
     frame = cv2.imread(img_path)
-    
-    # pose tracking 이미지 로드
+
+    # Load pose-tracking image
     pose_tracking_path = os.path.join(pose_tracking_dir, pose_tracking_files[current_img_idx])
     pose_tracking_frame = cv2.imread(pose_tracking_path)
     if pose_tracking_frame is None:
-        raise RuntimeError(f"Pose tracking 이미지를 읽을 수 없습니다: {pose_tracking_path}")
-    
-    # GT action 찾기
+        raise RuntimeError(f"Cannot read pose-tracking image: {pose_tracking_path}")
+
+    # Find matching GT action
     current_img_file = image_files[current_img_idx]
     current_gt = None
     for data in get_obs.action_gt_data:
         if data['image_file'] == current_img_file:
             current_gt = data['action']
             break
-    
-    # 버퍼 업데이트
+
+    # Update ring buffer
     prev_frames.append(frame)
     prev_timestamps.append(time.time())
     prev_frames.pop(0)
     prev_timestamps.pop(0)
-    
-    # 다음 이미지 인덱스 업데이트
+
+    # Advance image index
     current_img_idx += 1
     
     obs = {
@@ -196,15 +179,15 @@ def connect_to_server(ip, port):
     try:
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_socket.connect((ip, port))
-        print(f"서버 연결 성공: {ip}:{port}")
+        print(f"Connected to server: {ip}:{port}")
         return client_socket
     except Exception as e:
-        print(f"서버 연결 실패: {e}")
+        print(f"Server connection failed: {e}")
         return None
 
 def measure_zero_force(api, num_samples=100, delay=0.01):
-    """FT 센서에서 num_samples만큼 읽어서 평균값을 zero_force로 반환"""
-    print(f"[ZeroForce] 측정 시작... ({num_samples} samples)")
+    """Read num_samples FT samples and return their mean as the zero-force baseline."""
+    print(f"[ZeroForce] Measuring... ({num_samples} samples)")
     ft_samples = []
     for _ in range(num_samples):
         f = api.get_force_sync()
@@ -213,18 +196,18 @@ def measure_zero_force(api, num_samples=100, delay=0.01):
             ft_samples.append(np.concatenate([f, t]))
         time.sleep(delay)
     zero_force = np.mean(ft_samples, axis=0)
-    print(f"[ZeroForce] 완료! zero_force = {zero_force}")
+    print(f"[ZeroForce] Done! zero_force = {zero_force}")
     return zero_force
 
-# FTCollector 클래스 추가
+# FTCollector class
 class FTCollector:
-    """FrankaAPI 로부터 힘 벡터를 원하는 Hz 로 계속 가져와 저장"""
+    """Continuously polls force/torque vectors from FrankaAPI at a desired Hz and stores them."""
     def __init__(self, api, rate_hz: float = 100., zero_force=None):
         self.api = api
         self.rate = rate_hz
-        self.full_ts = []  # 모든 타임스탬프 저장
-        self.full_ft = []  # 모든 FT 데이터 저장
-        self.zero_force = zero_force  # ← 외부에서 전달받음
+        self.full_ts = []  # all timestamps
+        self.full_ft = []  # all FT data
+        self.zero_force = zero_force  # zero-force offset supplied externally
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._th = None
@@ -238,7 +221,7 @@ class FTCollector:
             t = self.api.get_torque_sync()
             if f is not None and t is not None:
                 ft_vec = np.concatenate([f, t])
-                # zero_force 보정
+                # Apply zero-force correction
                 if self.zero_force is not None:
                     ft_vec = ft_vec - self.zero_force
                 with self._lock:
@@ -259,7 +242,7 @@ class FTCollector:
         if self._th: self._th.join(timeout=1)
 
 def save_ft_data(ft_collector, filename="ft_trace.csv"):
-    """FTCollector.buf 안의 (timestamp, [fx,fy,fz,tx,ty,tz]) 전체를 CSV로 저장"""
+    """Save all (timestamp, [fx,fy,fz,tx,ty,tz]) entries collected by FTCollector to a CSV file."""
     ft_collector.stop()
     
     with ft_collector._lock:
@@ -283,44 +266,44 @@ def save_ft_data(ft_collector, filename="ft_trace.csv"):
                header=header,
                comments="")
     
-    print(f"저장 완료 ▶ {filename} ({csv_data.shape[0]} samples)")
+    print(f"Saved -> {filename} ({csv_data.shape[0]} samples)")
 
 @click.command()
-@click.option('--server_ip', '-si', default='172.27.190.125', help="서버 IP 주소")
-@click.option('--server_port', '-sp', default=5001, type=int, help="서버 포트 번호")
-@click.option('--operator', '-op', is_flag=True, help="수동 모드 (Enter로 다음 자세로 이동)")
-@click.option('--base_dir', '-bd', default='/home/ailab-2204/Workspace/gail-umi/data/Test_Pose/episode_1', help='데이터셋 에피소드 경로 (images/* 포함)')
+@click.option('--server_ip', '-si', default='172.27.190.125', help="Server IP address")
+@click.option('--server_port', '-sp', default=5001, type=int, help="Server port number")
+@click.option('--operator', '-op', is_flag=True, help="Manual mode (advance one step at a time with Enter)")
+@click.option('--base_dir', '-bd', default='/home/ailab-2204/Workspace/gail-umi/data/Test_Pose/episode_1', help='Dataset episode path (containing images/*)')
 def main(server_ip, server_port, operator, base_dir):
-    # 설정 경로 주입
+    # Inject configuration path
     global BASE_DIR
     BASE_DIR = base_dir
 
-    # 서버 연결
+    # Connect to server
     client_socket = connect_to_server(server_ip, server_port)
     if client_socket is None:
-        print("초기 연결 실패. 프로그램 종료.")
+        print("Initial connection failed. Exiting.")
         return
     franka_api = FrankaAPI(server_ip)
     
-    # === 1) zero_force 측정 ===
+    # === 1) Measure zero-force baseline ===
     zero_force = measure_zero_force(franka_api, num_samples=100, delay=0.01)
 
-    # === 2) FTCollector에 zero_force 전달 ===
+    # === 2) Pass zero_force to FTCollector ===
     ft_collector = FTCollector(franka_api, rate_hz=200, zero_force=zero_force)
     ft_collector.start()
-    
+
     pose = franka_api.get_pose_sync()
     print(f"Current pose: {pose}")
-    
-    # 초기 포즈 설정
+
+    # Set initial pose
     initial_pose = np.array([0.56, -0.0,  0.17,  0.99959016, -0.01183819,  0.02564274, -0.00467247])
 
-    # 먼저 initial pose로 이동
-    print("초기 포즈로 이동합니다. Enter를 누르면 시작합니다.")
+    # Move to initial pose first
+    print("Moving to initial pose. Press Enter to begin.")
     input()
     
     try:
-        # 초기 포즈 명령 전송
+        # Send initial pose command
         data = {
             'target_pose': initial_pose.tolist(),
             'timestamp': time.time(),
@@ -329,12 +312,12 @@ def main(server_ip, server_port, operator, base_dir):
         }
         message = json.dumps(data, separators=(',', ':'))
         client_socket.sendall(message.encode('utf-8') + b'\n')
-        print(f"Initial pose로 이동 중: {initial_pose[:3].round(3)}")
+        print(f"Moving to initial pose: {initial_pose[:3].round(3)}")
         time.sleep(2.0)
-        
-        print("초기 포즈 도달 완료. 이미지 창에 포커스를 두고 Enter를 누르면 다음으로 진행됩니다.")
+
+        print("Reached initial pose. Focus the image window and press Enter to continue.")
         cv2.namedWindow('Pose Tracking')
-        input()  # 여기서 Enter를 누르면 실제 재생 시작
+        input()  # Press Enter here to start playback
         
         prev_target_pose = initial_pose.copy()
         current_idx = 0
@@ -343,31 +326,31 @@ def main(server_ip, server_port, operator, base_dir):
             obs, gt_action, pose_tracking_frame = get_obs()
             
             if obs is None:
-                print("\n데이터셋 처리 완료")
-                # FT 데이터 저장
+                print("\nDataset playback complete.")
+                # Save FT data
                 save_ft_data(ft_collector, filename="replay_ft_data.csv")
                 break
             
             if gt_action is not None:
-                # 현재 end-effector pose 가져오기
+                # Get current end-effector pose
                 current_ee_pose = franka_api.get_pose_sync()
-                
-                # 현재 프레임과 다음 프레임의 GT 액션
+
+                # GT actions for current and next frames
                 current_action = gt_action
                 next_action = get_obs.action_gt_data[current_idx + 1]['action'] if current_idx + 1 < len(get_obs.action_gt_data) else None
                 
                 if next_action is not None:
-                    # 현재 프레임의 상대 포즈
+                    # Relative pose for the current frame
                     current_rel_pos = np.array(current_action['relative_position'])
                     current_rel_quat = np.array(current_action['relative_orientation'])
                     current_transformed = transform_pose(current_rel_pos, current_rel_quat, current_ee_pose)
-                    
-                    # 다음 프레임의 상대 포즈
+
+                    # Relative pose for the next frame
                     next_rel_pos = np.array(next_action['relative_position'])
                     next_rel_quat = np.array(next_action['relative_orientation'])
                     next_transformed = transform_pose(next_rel_pos, next_rel_quat, current_ee_pose)
-                    
-                    # 현재 프레임 실행
+
+                    # Execute the current frame
                     this_target_pose = prev_target_pose.copy()
                     this_target_pose[:3] += current_transformed[:3]
                     transformed_rot = Rotation.from_quat(current_transformed[3:])
@@ -375,7 +358,7 @@ def main(server_ip, server_port, operator, base_dir):
                     new_rot = current_rot * transformed_rot
                     this_target_pose[3:] = new_rot.as_quat()
                     
-                    # 서버로 명령 전송
+                    # Send command to server
                     data = {
                         'target_pose': this_target_pose.tolist(),
                         'timestamp': time.time(),
@@ -385,28 +368,28 @@ def main(server_ip, server_port, operator, base_dir):
                     message = json.dumps(data, separators=(',', ':'))
                     client_socket.sendall(message.encode('utf-8') + b'\n')
                     
-                    # 상태 출력 및 이미지 표시
+                    # Print status and display image
                     print(f"Replay Step {current_idx} | Pos: {this_target_pose[:3].round(3)} | Quat: {this_target_pose[3:].round(3)}")
                     cv2.imshow('Pose Tracking', cv2.resize(pose_tracking_frame, (0,0), fx=0.5, fy=0.5))
                     
                     should_quit = False
                     
                     if operator:
-                        # 수동 모드: Enter 키 대기 (한 스텝씩)
-                        print("엔터를 누르면 다음 스텝으로 이동합니다. 'q'를 누르면 종료합니다.")
+                        # Manual mode: wait for Enter key (step by step)
+                        print("Press Enter for the next step, or 'q' to quit.")
                         user_input = input().strip().lower()
                         if user_input == 'q':
-                            print("\n사용자가 종료를 요청했습니다.")
+                            print("\nUser requested quit.")
                             should_quit = True
                     else:
-                        # 자동 모드: GT action을 그대로 재생 (서버로 전송)
-                        # pose_tracking 이미지 업데이트
+                        # Auto mode: play GT actions as-is (send to server)
+                        # Update pose-tracking image
                         cv2.imshow('Pose Tracking', cv2.resize(pose_tracking_frame, (0,0), fx=0.5, fy=0.5))
-                        # 속도 조절: 10Hz로 재생 (0.1초 간격)
+                        # Speed control: play at 10 Hz (0.1s intervals)
                         time.sleep(0.1)
-                        key = cv2.waitKey(1) & 0xFF  # 1ms 대기
+                        key = cv2.waitKey(1) & 0xFF  # wait 1ms
                         if key == ord('q'):
-                            print("\n사용자가 종료를 요청했습니다.")
+                            print("\nUser requested quit.")
                             should_quit = True
                     
                     if should_quit:
@@ -416,7 +399,7 @@ def main(server_ip, server_port, operator, base_dir):
                     current_idx += 1
 
     finally:
-        # FT 데이터 수집 중지 및 저장
+        # Stop FT collection and save data
         save_ft_data(ft_collector, filename="replay_ft_data.csv")
         cv2.destroyAllWindows()
         if client_socket:
