@@ -1,5 +1,5 @@
 <div align="center">
-<img src="assets/banner.png" width="50%">
+<img src="assets/banner.png" width="75%">
 
 Geonhyup Lee, Youngjin Lee, Kangmin Kim, Seongju Lee, Sangjun Noh, Seunghyeok Back, Kyoobin Lee
 

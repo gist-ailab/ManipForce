@@ -27,6 +27,11 @@ def main():
         print(f"Error: Dataset '{args.dataset}' is not a known key or a valid path.")
         print(f"Available keys: {list(dataset_path_dict.keys())}")
         return
+
+    gpu_id = args.gpu
+    config_name = args.config
+    if config_name.endswith('.yaml'):
+        config_name = config_name[:-5]
     job_name = f"{config_name}_{dataset_name}"
 
     # Build the command string

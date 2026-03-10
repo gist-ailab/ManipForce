@@ -295,11 +295,11 @@ class FMTObsEncoder(ModuleAttrMixin):
     def extract_img_feat(self, img_1, img_2):
         if self.share_rgb_model:
             model_key = list(self.key_model_map.keys())[0]
-            img_1_out = self.key_model_map[model_key](img_1)  # (B*T, L=197, D=768)
-            img_2_out = self.key_model_map[model_key](img_2)  # (B*T, L=197, D=768)
+            img_1_out = self.key_model_map[model_key](img_1)  # (B*T, L=257, D=768)
+            img_2_out = self.key_model_map[model_key](img_2)  # (B*T, L=257, D=768)
         else:
-            img_1_out = self.key_model_map[self.rgb_keys[0]](img_1)  # (B*T, L=197, D=768)
-            img_2_out = self.key_model_map[self.rgb_keys[1]](img_2)  # (B*T, L=197, D=768)
+            img_1_out = self.key_model_map[self.rgb_keys[0]](img_1)  # (B*T, L=257, D=768)
+            img_2_out = self.key_model_map[self.rgb_keys[1]](img_2)  # (B*T, L=257, D=768)
         return img_1_out, img_2_out
         
     def forward(self, obs_dict: dict, predict_ft: bool = False, verbose: bool = False) -> torch.Tensor:
@@ -316,39 +316,26 @@ class FMTObsEncoder(ModuleAttrMixin):
         img_1 = self.key_transform_map[rgb_key_1](img_1)
         img_2 = self.key_transform_map[rgb_key_2](img_2)
         
-        if self.frozen and 'adapter' not in self.model_name:
+        if self.frozen:
             with torch.no_grad():
                 img_feat_1, img_feat_2 = self.extract_img_feat(img_1, img_2)
         else:
             img_feat_1, img_feat_2 = self.extract_img_feat(img_1, img_2)
-
+        
         if not self.use_cls_token:
             if verbose:
                 logger.info(f"DEBUG: use_cls_token is False")
-            img_feat_1 = img_feat_1[:, 1:, :] # (B*T, L=196, D=768)
-            img_feat_2 = img_feat_2[:, 1:, :] # (B*T, L=196, D=768)
+            img_feat_1 = img_feat_1[:, 1:, :] # (B*T, L=256, D=768)
+            img_feat_2 = img_feat_2[:, 1:, :] # (B*T, L=256, D=768)
         else:
             if verbose:
                 logger.info(f"DEBUG: use_cls_token is True")
         
-        img_feat_seq_1 = rearrange(img_feat_1, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=196, D=768) # (B*T, L, D) -> (B, T, L, D)
-        img_feat_seq_2 = rearrange(img_feat_2, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=196, D=768) # (B*T, L, D) -> (B, T, L, D)
+        img_feat_seq_1 = rearrange(img_feat_1, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=256, D=768) # (B*T, L, D) -> (B, T, L, D)
+        img_feat_seq_2 = rearrange(img_feat_2, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=256, D=768) # (B*T, L, D) -> (B, T, L, D)
 
         ft = obs_dict[self.ft_key].to(self.device)
-        if self.use_ft_ncde:
-            if verbose:
-                logger.info(f"DEBUG: use_ft_ncde is True")
-            init_feat_1 = self.init_pool(img_feat_seq_1[:, 0, :, :])
-            init_feat_2 = self.init_pool(img_feat_seq_2[:, 0, :, :])
-            init_feat = torch.cat([init_feat_1, init_feat_2], dim=-1)
-            ft_timestamps = obs_dict.get(self.ft_timestamp_key, None)
-            if ft_timestamps is None:
-                logger.warning(f"DEBUG: ft_timestamps is None")
-            ft_feat = self.ft_embed(init_feat, ft, ft_timestamps=ft_timestamps) # (B, T=8, D=768)
-        else:
-            if verbose:
-                logger.info(f"DEBUG: use_ft_ncde is False")
-            ft_feat = self.ft_embed(ft) # (B, T=8, D=768)
+        ft_feat = self.ft_embed(ft) # (B, T=8, D=768)
 
         L = img_feat_seq_1.shape[2]
         T_ft = ft_feat.shape[1]
@@ -394,69 +381,21 @@ class FMTObsEncoder(ModuleAttrMixin):
         img_feat_2 = rearrange(img_feat_seq_2, 'b t l d -> b (t l) d') # (B, T, L, D) -> (B, T*L, D)
 
         combined_img_feat = torch.cat([img_feat_1, img_feat_2], dim=1)
-        if self.use_cross_attention:
-            if verbose:
-                logger.info(f"DEBUG: use_cross_attention is True")
-            if self.cross_attention_type == 'sequential':
-                if verbose:
-                    logger.info(f"DEBUG: cross_attention_type is sequential")
-                assert len(self.cross_attention_modals) == 2
-                if self.cross_attention_modals[0] == 'img':
-                    if verbose:
-                        logger.info(f"DEBUG: cross_attention_modals is [img, ft]")
-                    enhanced_img_feat = self.img_cross_attention(combined_img_feat, ft_feat)
-                    enhanced_ft_feat = self.ft_cross_attention(ft_feat, enhanced_img_feat)
-                elif self.cross_attention_modals[0] == 'ft':
-                    if verbose:
-                        logger.info(f"DEBUG: cross_attention_modals is [ft, img]")
-                    enhanced_ft_feat = self.ft_cross_attention(ft_feat, combined_img_feat)
-                    enhanced_img_feat = self.img_cross_attention(combined_img_feat, enhanced_ft_feat)
-                else:
-                    raise ValueError(f"Unsupported cross attention modality: {self.cross_attention_modals[0]}")
-            elif self.cross_attention_type == 'parallel':
-                if verbose:
-                    logger.info(f"DEBUG: cross_attention_type is parallel")
-                if 'img' in self.cross_attention_modals:
-                    if verbose:
-                        logger.info(f"DEBUG: cross_attention_modals is img")
-                    enhanced_img_feat = self.img_cross_attention(combined_img_feat, ft_feat)
-                else:
-                    enhanced_img_feat = combined_img_feat
-                if 'ft' in self.cross_attention_modals:
-                    if verbose:
-                        logger.info(f"DEBUG: cross_attention_modals is ft")
-                    enhanced_ft_feat = self.ft_cross_attention(ft_feat, combined_img_feat)
-                else:
-                    enhanced_ft_feat = ft_feat
-            else:
-                raise ValueError(f"Unsupported cross attention type: {self.cross_attention_type}")
-        else:
-            if verbose:
-                logger.info(f"DEBUG: use_cross_attention is False")
-            enhanced_img_feat = combined_img_feat
-            enhanced_ft_feat = ft_feat
         
-        if self.use_attn_pool:
+        if 'img' in self.cross_attention_modals:
             if verbose:
-                logger.info(f"DEBUG: use_attn_pool is True, use unet-dp")
-            enhanced_img_feat_1, enhanced_img_feat_2 = enhanced_img_feat.split([img_feat_1.shape[1], img_feat_2.shape[1]], dim=1)
-            enhanced_img_feat_1 = rearrange(enhanced_img_feat_1, 'b (t l) d -> (b t) l d', b=B, t=T_img)
-            enhanced_img_feat_2 = rearrange(enhanced_img_feat_2, 'b (t l) d -> (b t) l d', b=B, t=T_img)
-            
-            pooled_img_feat_1 = self.img_attn_pool(enhanced_img_feat_1) # (b*t, d)
-            pooled_img_feat_2 = self.img_attn_pool(enhanced_img_feat_2) # (b*t, d)
-
-            pooled_img_feat_1 = rearrange(pooled_img_feat_1, '(b t) d -> b (t d)', b=B, t=T_img)
-            pooled_img_feat_2 = rearrange(pooled_img_feat_2, '(b t) d -> b (t d)', b=B, t=T_img)
-
-            pooled_ft_feat = self.ft_attn_pool(enhanced_ft_feat) # (b, d)
-
-            final_feat = torch.cat([pooled_img_feat_1, pooled_img_feat_2, pooled_ft_feat], dim=-1) # (b, 5*d)
+                logger.info(f"DEBUG: cross_attention_modals is img")
+            enhanced_img_feat = self.img_cross_attention(combined_img_feat, ft_feat)
         else:
+            enhanced_img_feat = combined_img_feat
+        if 'ft' in self.cross_attention_modals:
             if verbose:
-                logger.info(f"DEBUG: use_attn_pool is False, use transformer-dp")
-            final_feat = torch.cat([enhanced_img_feat, enhanced_ft_feat], dim=1)
+                logger.info(f"DEBUG: cross_attention_modals is ft")
+            enhanced_ft_feat = self.ft_cross_attention(ft_feat, combined_img_feat)
+        else:
+            enhanced_ft_feat = ft_feat
 
+        final_feat = torch.cat([enhanced_img_feat, enhanced_ft_feat], dim=1)
         final_feat = self.final_norm(self.final_proj(final_feat))
         if verbose:
             logger.info(f"DEBUG: final_feat.shape: {final_feat.shape}")
