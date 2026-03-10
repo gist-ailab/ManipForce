@@ -303,100 +303,106 @@ class FMTObsEncoder(ModuleAttrMixin):
         return img_1_out, img_2_out
         
     def forward(self, obs_dict: dict, predict_ft: bool = False, verbose: bool = False) -> torch.Tensor:
-
         # 1) Extract RGB features from all cameras
         # self.rgb_keys = ['handeye_cam_1', 'handeye_cam_2']
         rgb_key_1, rgb_key_2 = self.rgb_keys[0], self.rgb_keys[1]
-        img_1, img_2 = obs_dict[rgb_key_1], obs_dict[rgb_key_2]
+        img_1, img_2 = obs_dict[rgb_key_1], obs_dict[rgb_key_2] 
+        # img_1, img_2 shape: (B, T_img, C, H, W)
+        
         B, T_img, _, _, _ = img_1.shape
 
-        img_1 = rearrange(img_1, 'b t c h w -> (b t) c h w')
-        img_2 = rearrange(img_2, 'b t c h w -> (b t) c h w')
+        # Flatten Batch and Time dimensions for backbone processing
+        img_1 = rearrange(img_1, 'b t c h w -> (b t) c h w') # (B*T_img, C, H, W)
+        img_2 = rearrange(img_2, 'b t c h w -> (b t) c h w') # (B*T_img, C, H, W)
 
-        img_1 = self.key_transform_map[rgb_key_1](img_1)
-        img_2 = self.key_transform_map[rgb_key_2](img_2)
+        # Image transformation/preprocessing
+        img_1 = self.key_transform_map[rgb_key_1](img_1) # (B*T_img, C, H, W)
+        img_2 = self.key_transform_map[rgb_key_2](img_2) # (B*T_img, C, H, W)
         
         if self.frozen:
             with torch.no_grad():
                 img_feat_1, img_feat_2 = self.extract_img_feat(img_1, img_2)
         else:
             img_feat_1, img_feat_2 = self.extract_img_feat(img_1, img_2)
-        
+        # img_feat_1, img_feat_2 shape: (B*T_img, L+1, D_backbone) - where L+1 includes CLS token
+
         if not self.use_cls_token:
             if verbose:
                 logger.info(f"DEBUG: use_cls_token is False")
-            img_feat_1 = img_feat_1[:, 1:, :] # (B*T, L=256, D=768)
-            img_feat_2 = img_feat_2[:, 1:, :] # (B*T, L=256, D=768)
+            img_feat_1 = img_feat_1[:, 1:, :] # (B*T_img, L, D_backbone) - remove CLS token
+            img_feat_2 = img_feat_2[:, 1:, :] # (B*T_img, L, D_backbone)
         else:
             if verbose:
                 logger.info(f"DEBUG: use_cls_token is True")
+            # Keep CLS token, shape remains (B*T_img, L+1, D_backbone)
         
-        img_feat_seq_1 = rearrange(img_feat_1, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=256, D=768) # (B*T, L, D) -> (B, T, L, D)
-        img_feat_seq_2 = rearrange(img_feat_2, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T=2, L=256, D=768) # (B*T, L, D) -> (B, T, L, D)
+        # Restore Batch and Time dimensions
+        img_feat_seq_1 = rearrange(img_feat_1, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T_img, L, D_backbone)
+        img_feat_seq_2 = rearrange(img_feat_2, '(b t) l d -> b t l d', b=B, t=T_img) # (B, T_img, L, D_backbone)
 
-        ft = obs_dict[self.ft_key].to(self.device)
-        ft_feat = self.ft_embed(ft) # (B, T=8, D=768)
+        # Process Force/Torque (F/T) sensor data
+        ft = obs_dict[self.ft_key].to(self.device) # (B, T_ft, F_dim)
+        ft_feat = self.ft_embed(ft) # (B, T_ft, D_backbone)
 
         L = img_feat_seq_1.shape[2]
         T_ft = ft_feat.shape[1]
         
-        img_feat_seq_1 = self.img_proj(img_feat_seq_1)
-        img_feat_seq_2 = self.img_proj(img_feat_seq_2)
-        ft_feat = self.ft_proj(ft_feat)
+        # Projection to model dimension (D)
+        img_feat_seq_1 = self.img_proj(img_feat_seq_1) # (B, T_img, L, D)
+        img_feat_seq_2 = self.img_proj(img_feat_seq_2) # (B, T_img, L, D)
+        ft_feat = self.ft_proj(ft_feat) # (B, T_ft, D)
 
+        # 2) Positional & Modal Embeddings
         if self.use_spatial_embed:
-            if verbose:
-                logger.info(f"DEBUG: use_spatial_embed is True")
-            img_feat_seq_1 = img_feat_seq_1 + self.spatial_embed[rgb_key_1].unsqueeze(1).expand(-1, T_img, -1, -1)
-            img_feat_seq_2 = img_feat_seq_2 + self.spatial_embed[rgb_key_2].unsqueeze(1).expand(-1, T_img, -1, -1)
-        else:
-            if verbose:
-                logger.info(f"DEBUG: use_spatial_embed is False")
+            # spatial_embed: (1, 1, L, D)
+            img_feat_seq_1 = img_feat_seq_1 + self.spatial_embed[rgb_key_1].unsqueeze(1).expand(-1, T_img, -1, -1) # (B, T_img, L, D)
+            img_feat_seq_2 = img_feat_seq_2 + self.spatial_embed[rgb_key_2].unsqueeze(1).expand(-1, T_img, -1, -1) # (B, T_img, L, D)
 
         if self.use_temporal_embed:
-            if verbose:
-                logger.info(f"DEBUG: use_time_embed is True")
-            img_feat_seq_1 = img_feat_seq_1 + self._interpolate(self.temporal_embed, size=T_img).unsqueeze(2).expand(-1, -1, L, -1)
-            img_feat_seq_2 = img_feat_seq_2 + self._interpolate(self.temporal_embed, size=T_img).unsqueeze(2).expand(-1, -1, L, -1)
-            ft_feat = ft_feat + self.temporal_embed
-        else:
-            if verbose:
-                logger.info(f"DEBUG: use_time_embed is False")
-
+            # temporal_embed: (1, T_max, D) -> interpolated to (1, T_img, 1, D)
+            temp_embed_img = self._interpolate(self.temporal_embed, size=T_img).unsqueeze(2) # (1, T_img, 1, D)
+            img_feat_seq_1 = img_feat_seq_1 + temp_embed_img.expand(-1, -1, L, -1) # (B, T_img, L, D)
+            img_feat_seq_2 = img_feat_seq_2 + temp_embed_img.expand(-1, -1, L, -1) # (B, T_img, L, D)
+            ft_feat = ft_feat + self.temporal_embed # (B, T_ft, D)
+        
         if self.use_modal_embed:
-            if verbose:
-                logger.info(f"DEBUG: use_modal_embed is True")
-            img_feat_seq_1 = img_feat_seq_1 + self.modal_embed[rgb_key_1].unsqueeze(1).expand(-1, T_img, L, -1)
-            img_feat_seq_2 = img_feat_seq_2 + self.modal_embed[rgb_key_2].unsqueeze(1).expand(-1, T_img, L, -1)
-            ft_feat = ft_feat + self.modal_embed[self.ft_key].expand(-1, T_ft, -1)
-        else:
-            if verbose:
-                logger.info(f"DEBUG: use_modal_embed is False")
+            # modal_embed: (1, 1, 1, D)
+            img_feat_seq_1 = img_feat_seq_1 + self.modal_embed[rgb_key_1].unsqueeze(1).expand(-1, T_img, L, -1) # (B, T_img, L, D)
+            img_feat_seq_2 = img_feat_seq_2 + self.modal_embed[rgb_key_2].unsqueeze(1).expand(-1, T_img, L, -1) # (B, T_img, L, D)
+            ft_feat = ft_feat + self.modal_embed[self.ft_key].expand(-1, T_ft, -1) # (B, T_ft, D)
         
-        img_feat_seq_1 = self.img_norm(img_feat_seq_1)
-        img_feat_seq_2 = self.img_norm(img_feat_seq_2)
-        ft_feat = self.ft_norm(ft_feat)
+        img_feat_seq_1 = self.img_norm(img_feat_seq_1) # (B, T_img, L, D)
+        img_feat_seq_2 = self.img_norm(img_feat_seq_2) # (B, T_img, L, D)
+        ft_feat = self.ft_norm(ft_feat) # (B, T_ft, D)
         
-        img_feat_1 = rearrange(img_feat_seq_1, 'b t l d -> b (t l) d') # (B, T, L, D) -> (B, T*L, D)
-        img_feat_2 = rearrange(img_feat_seq_2, 'b t l d -> b (t l) d') # (B, T, L, D) -> (B, T*L, D)
+        # Merge Time and Patch dimensions for Cross-Attention
+        img_feat_1 = rearrange(img_feat_seq_1, 'b t l d -> b (t l) d') # (B, T_img * L, D)
+        img_feat_2 = rearrange(img_feat_seq_2, 'b t l d -> b (t l) d') # (B, T_img * L, D)
 
-        combined_img_feat = torch.cat([img_feat_1, img_feat_2], dim=1)
+        # Concatenate features from both cameras
+        combined_img_feat = torch.cat([img_feat_1, img_feat_2], dim=1) # (B, 2 * T_img * L, D)
         
+        # 3) Cross-Attention Modalities
         if 'img' in self.cross_attention_modals:
-            if verbose:
-                logger.info(f"DEBUG: cross_attention_modals is img")
-            enhanced_img_feat = self.img_cross_attention(combined_img_feat, ft_feat)
+            # Query: Images, Key/Value: FT
+            enhanced_img_feat = self.img_cross_attention(combined_img_feat, ft_feat) # (B, 2 * T_img * L, D)
         else:
             enhanced_img_feat = combined_img_feat
+
         if 'ft' in self.cross_attention_modals:
-            if verbose:
-                logger.info(f"DEBUG: cross_attention_modals is ft")
-            enhanced_ft_feat = self.ft_cross_attention(ft_feat, combined_img_feat)
+            # Query: FT, Key/Value: Images
+            enhanced_ft_feat = self.ft_cross_attention(ft_feat, combined_img_feat) # (B, T_ft, D)
         else:
             enhanced_ft_feat = ft_feat
 
-        final_feat = torch.cat([enhanced_img_feat, enhanced_ft_feat], dim=1)
-        final_feat = self.final_norm(self.final_proj(final_feat))
+        # 4) Final Fusion
+        # Concatenate enhanced image and F/T features
+        # Total length: (2 * T_img * L) + T_ft
+        final_feat = torch.cat([enhanced_img_feat, enhanced_ft_feat], dim=1) # (B, Total_Tokens, D)
+        
+        # Final projection and normalization
+        final_feat = self.final_norm(self.final_proj(final_feat)) # (B, Total_Tokens, D)
+        
         if verbose:
             logger.info(f"DEBUG: final_feat.shape: {final_feat.shape}")
 
