@@ -364,7 +364,7 @@ class FMTObsEncoder(ModuleAttrMixin):
             img_feat_seq_1 = img_feat_seq_1 + temp_embed_img.expand(-1, -1, L, -1) # (B, T_img, L, D)
             img_feat_seq_2 = img_feat_seq_2 + temp_embed_img.expand(-1, -1, L, -1) # (B, T_img, L, D)
             ft_feat = ft_feat + self.temporal_embed # (B, T_ft, D)
-        
+
         if self.use_modal_embed:
             # modal_embed: (1, 1, 1, D)
             img_feat_seq_1 = img_feat_seq_1 + self.modal_embed[rgb_key_1].unsqueeze(1).expand(-1, T_img, L, -1) # (B, T_img, L, D)
@@ -381,7 +381,7 @@ class FMTObsEncoder(ModuleAttrMixin):
 
         # Concatenate features from both cameras
         combined_img_feat = torch.cat([img_feat_1, img_feat_2], dim=1) # (B, 2 * T_img * L, D)
-        
+
         # 3) Cross-Attention Modalities
         if 'img' in self.cross_attention_modals:
             # Query: Images, Key/Value: FT
