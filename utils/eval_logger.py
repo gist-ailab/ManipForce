@@ -1,10 +1,9 @@
-"""Eval logging: FT trace, diffusion intermediates, trial results, debug CSVs."""
+"""Eval logging: FT trace, trial results, debug CSVs."""
 import os
 import csv
 import time
 from datetime import datetime
 import numpy as np
-import torch
 
 
 def save_ft_data(ft_collector, filename="ft_trace.csv"):
@@ -18,16 +17,6 @@ def save_ft_data(ft_collector, filename="ft_trace.csv"):
     arr_ft = np.vstack(ft_list).astype(np.float32)
     np.savetxt(filename, np.hstack([arr_ts, arr_ft]),
                delimiter=",", header="timestamp,fx,fy,fz,tx,ty,tz", comments="")
-
-
-def save_diffusion_intermediates(state):
-    if not state.diffusion_intermediates:
-        return
-    ts_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-    fname = os.path.join(state.output_dir, f"diffusion_intermediates_{ts_str}.pt")
-    torch.save(state.diffusion_intermediates, fname)
-    print(f"[LOG] Diffusion intermediates 저장: {fname} ({len(state.diffusion_intermediates)} inference steps)")
-    state.diffusion_intermediates = []
 
 
 def save_trial_result(success, state, config):
@@ -88,24 +77,19 @@ def log_debug_tracking(policy_step, action_mode, current_ee_pose, this_target_po
                     'tgt_x,tgt_y,tgt_z,tgt_q0,tgt_q1,tgt_q2,tgt_q3,'
                     'tf_pos_x,tf_pos_y,tf_pos_z,'
                     'raw_dx,raw_dy,raw_dz,raw_q0,raw_q1,raw_q2,raw_q3,'
-                    'ft_fx,ft_fy,ft_fz,ft_tx,ft_ty,ft_tz,'
-                    'ca_active,ca_fb_x,ca_fb_y,ca_fb_z,ca_off_x,ca_off_y,ca_off_z\n')
+                    'ft_fx,ft_fy,ft_fz,ft_tx,ft_ty,ft_tz\n')
     try:
         raw_vals = [0.0] * 7
         if raw_action is not None:
             raw_vals = list(raw_action[:min(7, len(raw_action))])
             raw_vals += [0.0] * (7 - len(raw_vals))
         ft_vals = list(state.ft_model_input[:6])
-        ca_vals = [1 if state.ca_active else 0,
-                   *state.ca_force_body.tolist(),
-                   *state.ca_offset_mm.tolist()]
         vals = [policy_step, f"{time.time():.3f}", action_mode,
                 *[f"{v:.6f}" for v in current_ee_pose],
                 *[f"{v:.6f}" for v in this_target_pose],
                 *[f"{v:.6f}" for v in transformed_action[:3]],
                 *[f"{v:.6f}" for v in raw_vals],
-                *[f"{v:.6f}" for v in ft_vals],
-                *[f"{v:.6f}" for v in ca_vals]]
+                *[f"{v:.6f}" for v in ft_vals]]
         with open(path, 'a') as f:
             f.write(','.join(str(v) for v in vals) + '\n')
     except Exception:

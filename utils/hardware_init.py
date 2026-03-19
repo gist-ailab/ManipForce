@@ -141,8 +141,8 @@ def reset_to_home(client_socket, franka_api, initial_pose, config, state,
         print("[RESET] FT baseline 재측정 중 (2s 안정화)...")
         time.sleep(2.0)
         ft_buf, _ = ft_collector.window(30)
-        state.ca_ft_baseline = ft_buf.mean(axis=0) if len(ft_buf) > 0 else np.zeros(6, dtype=np.float32)
-        print(f"[RESET] FT baseline: F=[{state.ca_ft_baseline[0]:+.2f},{state.ca_ft_baseline[1]:+.2f},{state.ca_ft_baseline[2]:+.2f}]N")
+        state.gripping_ft_bias = ft_buf.mean(axis=0) if len(ft_buf) > 0 else np.zeros(6, dtype=np.float32)
+        print(f"[RESET] FT baseline: F=[{state.gripping_ft_bias[0]:+.2f},{state.gripping_ft_bias[1]:+.2f},{state.gripping_ft_bias[2]:+.2f}]N")
 
     print("[RESET] 완료")
 
@@ -195,10 +195,10 @@ def calibrate_startup(client_socket, initial_pose, config, state, hw_refs, ft_co
         except (OSError, BrokenPipeError) as e:
             print(f"초기 위치 이동 실패: {e}")
 
-    # FT baseline (contact 감지 + CA 공용, 항상 측정)
+    # FT baseline 측정
     print("[FT] initial_pose에서 FT baseline 측정 중 (2s 안정화)...")
     time.sleep(2.0)
     ft_buf, _ = ft_collector.window(30)
-    state.ca_ft_baseline = ft_buf.mean(axis=0) if len(ft_buf) > 0 else np.zeros(6, dtype=np.float32)
-    print(f"[FT] baseline: F=[{state.ca_ft_baseline[0]:+.2f},{state.ca_ft_baseline[1]:+.2f},{state.ca_ft_baseline[2]:+.2f}]N  "
-          f"T=[{state.ca_ft_baseline[3]:+.3f},{state.ca_ft_baseline[4]:+.3f},{state.ca_ft_baseline[5]:+.3f}]")
+    state.gripping_ft_bias = ft_buf.mean(axis=0) if len(ft_buf) > 0 else np.zeros(6, dtype=np.float32)
+    print(f"[FT] baseline: F=[{state.gripping_ft_bias[0]:+.2f},{state.gripping_ft_bias[1]:+.2f},{state.gripping_ft_bias[2]:+.2f}]N  "
+          f"T=[{state.gripping_ft_bias[3]:+.3f},{state.gripping_ft_bias[4]:+.3f},{state.gripping_ft_bias[5]:+.3f}]")

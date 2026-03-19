@@ -29,13 +29,11 @@ robot:
 # Control parameters
 control:
   frequency: 200.0  # Hz
-  sync_mode: false   # true: /pose_sync (도달 대기), false: /pose (비동기)
 
 # Image processing
 image:
   history_length: 2       # IMG_HIST
   down_sample_steps: 3    # 학습 config obs_down_sample_steps와 동일
-  # obs_down_sample_steps: inference  # v2 방식: 인퍼런스마다 1장 캡처, 이전 프레임 재사용
   target_resolution: [256, 256]
 
 # Action processing
@@ -48,7 +46,6 @@ action:
 
 # FT sensor settings
 ft_sensor:
-  mode: sensor                # 'raw' (v2 호환, bias 없음) / 'sensor' (bias 제거 + offset) / 'fixed' (고정값)
   # fixed_values: [-0.1900, -0.2520, -1.9958, 0.0370, -0.0070, 0.0073]
   rate_hz: 200.0
   buffer_length: 100       # FT_RING_LEN
@@ -76,13 +73,10 @@ gripper:
 # Model settings
 model:
   num_inference_steps: 2
-  custom_timesteps: [60, 10] 
-  ensemble: 1
-  save_intermediates: false
 
 # Debug
 debug:
-  headless: true
+  headless: false
   save_debug_csv: false
 
 # Coordinate transformation matrix
@@ -98,16 +92,6 @@ coordinate_transform:
     [0, 0, 1]
   ]
 
-# Contact assist
-contact_assist:
-  enabled: false
-  mode: fixed_direction 
-  force_threshold:  [1, 1, 1]    # N, 접촉 감지 기준
-  hysteresis: 0.5
-  insert_direction: [0, 0, -0.3]  # world frame 삽입 방향 (+x, 약간 -z), 자동 정규화
-  insert_offset: 0.005 
-  gain: 0.0002             # m/N
-  max_offset: 0.005        # m
 
 # Visualization
 visualization:

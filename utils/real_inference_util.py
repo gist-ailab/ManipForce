@@ -336,6 +336,21 @@ def convert_action_10d_to_7d(action_10d):
     
     return action_7d
 
+def convert_action_7d_to_8d(action_7d):
+    """
+    7D action [pos(3) + axis_angle(3) + gripper(1)] ->
+    8D action [pos(3) + quat(4) + gripper(1)]
+    """
+    position = action_7d[..., :3]
+    axis_angle = action_7d[..., 3:6]
+    gripper = action_7d[..., 6:7]
+
+    rot = R.from_rotvec(axis_angle)
+    quat = rot.as_quat()  # [x, y, z, w]
+
+    action_8d = np.concatenate([position, quat, gripper], axis=-1)
+    return action_8d
+
 def convert_action_10d_to_8d(action_10d):
     position = action_10d[..., :3]
     rotation_6d = action_10d[..., 3:9]

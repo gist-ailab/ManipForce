@@ -387,9 +387,6 @@ def make_display_image(left_bgr, right_bgr, mode, state, config,
     info_panel = np.zeros((info_h, total_w, 3), dtype=np.uint8)
 
     mode_text = f"{mode.upper()} | {state.gui_mode_label}"
-    n_ens = config.get('model', {}).get('ensemble', 1)
-    if n_ens > 1:
-        mode_text += f"  ens={n_ens}"
     if state.gui_inference_hz > 0:
         mode_text += f"  model:{state.gui_inference_hz:.1f}Hz"
     if state.gui_cycle_ms > 0:
@@ -416,46 +413,14 @@ def make_display_image(left_bgr, right_bgr, mode, state, config,
         ft = np.asarray(ft_data, dtype=np.float32)
         if ft.ndim == 2:
             ft = ft[-1]
-        ft_d = ft - state.ca_ft_baseline
+        ft_d = ft - state.gripping_ft_bias
         fn = float(np.linalg.norm(ft_d[:3]))
         cv2.putText(info_panel, f"dF:[{ft_d[0]:+.1f},{ft_d[1]:+.1f},{ft_d[2]:+.1f}] |dF|={fn:.1f}N  "
                     f"dT:[{ft_d[3]:+.2f},{ft_d[4]:+.2f},{ft_d[5]:+.2f}]",
                     (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 220, 255), 1)
 
-    ca_cfg = config.get('contact_assist', {})
-    # CA 표시: ca_last_applied_time 기준으로 최근 0.5초 이내면 활성 표시 (GUI 스레드 타이밍 문제 방지)
-    ca_recently_applied = (time.time() - getattr(state, 'ca_last_applied_time', 0)) < 0.5
-    ca_count = getattr(state, 'ca_apply_count', 0)
-    if state.ca_active or ca_recently_applied:
-        o = state.ca_offset_mm
-        fb = state.ca_force_body if hasattr(state, 'ca_force_body') else np.zeros(3)
-        thr_cfg = ca_cfg.get('force_threshold', 3.0)
-        thr_arr = np.array(thr_cfg) if isinstance(thr_cfg, (list, tuple)) else np.array([thr_cfg]*3)
-        f_strs = []
-        for i, ax_name in enumerate(['x','y','z']):
-            exceeded = abs(fb[i]) > thr_arr[i]
-            f_strs.append(f"F{ax_name}={fb[i]:+.1f}{'*' if exceeded else ''}")
-        cv2.putText(info_panel, f"CA ON(#{ca_count}): {' '.join(f_strs)}  offset=[{o[0]:+.2f},{o[1]:+.2f},{o[2]:+.2f}]mm",
-                    (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 100), 1)
-        cv2.putText(info_panel, "t(stop) p(start) s(ok) f(fail) e(exit) r(reset) q(quit)",
-                    (total_w - 400, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
-    else:
-        if ca_cfg.get('enabled', False):
-            fb = state.ca_force_body if hasattr(state, 'ca_force_body') else np.zeros(3)
-            thr_cfg = ca_cfg.get('force_threshold', 3.0)
-            thr_arr = np.array(thr_cfg) if isinstance(thr_cfg, (list, tuple)) else np.array([thr_cfg]*3)
-            f_strs = []
-            for i, ax_name in enumerate(['x','y','z']):
-                f_strs.append(f"F{ax_name}={fb[i]:+.1f}")
-            thr_str = f"[{thr_arr[0]:.0f},{thr_arr[1]:.0f},{thr_arr[2]:.0f}]"
-            cnt_str = f" (#{ca_count})" if ca_count > 0 else ""
-            cv2.putText(info_panel, f"CA: off{cnt_str} ({' '.join(f_strs)}) thr={thr_str}N",
-                        (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
-            cv2.putText(info_panel, "t(stop) p(start) s(ok) f(fail) e(exit) r(reset) q(quit)",
-                        (total_w - 400, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
-        else:
-            cv2.putText(info_panel, "t(stop) p(start) s(ok) f(fail) e(exit) r(reset) q(quit)",
-                        (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
+    cv2.putText(info_panel, "t(stop) p(start) s(ok) f(fail) e(exit) r(reset) q(quit)",
+                (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
 
     draw_prediction_overlay(vis_img, state, config)
 

@@ -36,7 +36,6 @@ image:
   history_length: 2  # IMG_HIST
   target_resolution: [256, 256]  # [width, height]
   down_sample_steps: 3  # 학습 config obs_down_sample_steps와 동일
-  # obs_down_sample_steps: inference  # 'inference'=v2방식(인퍼런스간 프레임) / 정수=시간기반 간격 / 생략=down_sample_steps
 
 # Action processing
 action:
@@ -47,7 +46,6 @@ action:
 
 # FT sensor settings
 ft_sensor:
-  mode: sensor  # 'sensor' (실시간 센서) or 'fixed' (고정값 입력)
   fixed_values: [-0.1900, -0.2520, -1.9958, 0.0370, -0.0070, 0.0073]  # [Fx, Fy, Fz, Tx, Ty, Tz] — training 전체 평균
   # fixed_values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   rate_hz: 200.0
@@ -75,10 +73,7 @@ gripper:
 
 # Model settings
 model:
-  num_inference_steps: 16 #DDIM inference iterations
-  # custom_timesteps: [50]   # DDIM inference iterations
-  ensemble: 1 # 같은 obs에 N번 inference 후 평균 (1=기본, 3 추천)
-  save_intermediates: false
+  num_inference_steps: 16
 
 # Debug mode
 debug:
@@ -98,14 +93,6 @@ coordinate_transform:
           [0, 0, 1]
   ]
 
-# Contact assist: 접촉 감지 시 삽입 방향으로 고정 offset
-contact_assist:
-  enabled: true
-  mode: fixed_direction     
-  force_threshold:  [0.6, 0.6, 1.1]    # N, 접촉 감지 기준
-  hysteresis: 0.5
-  insert_direction: [1, 0, -0.3]  # world frame 삽입 방향 (+x, 약간 -z), 자동 정규화
-  insert_offset: 0.005        # m — 접촉 시 삽입 방향으로 3mm offset
 
 # Visualization
 visualization:

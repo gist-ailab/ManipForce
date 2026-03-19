@@ -62,13 +62,11 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
         if num_inference_steps is None:
             num_inference_steps = noise_scheduler.config.num_train_timesteps
         self.num_inference_steps = num_inference_steps
-        self.custom_timesteps = None  # 사용자 지정 timestep (예: [90, 0])
-    
+
     # ========= inference  ============
     def conditional_sample(self,
             condition_data, condition_mask,
             cond=None, generator=None,
-            return_intermediates=False,
             # keyword arguments to scheduler.step
             **kwargs
             ):
@@ -81,102 +79,29 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
             device=condition_data.device,
             generator=generator)
 
-        # 중간 결과 저장용
-        intermediates = [] if return_intermediates else None
+        # set step values
+        scheduler.set_timesteps(self.num_inference_steps)
 
-        if self.custom_timesteps is not None:
-            # Custom timesteps: 직접 DDIM step 수행 (scheduler.step의 prev_timestep 계산이 고정 간격이라 맞지 않음)
-            timesteps = self.custom_timesteps
-            alphas_cumprod = scheduler.alphas_cumprod.to(device=condition_data.device)
-            final_alpha_cumprod = scheduler.final_alpha_cumprod.to(device=condition_data.device)
+        for t in scheduler.timesteps:
+            # 1. apply conditioning
+            trajectory[condition_mask] = condition_data[condition_mask]
 
-            for i, t in enumerate(timesteps):
-                # 1. apply conditioning
-                trajectory[condition_mask] = condition_data[condition_mask]
+            # 2. predict model output
+            model_output = model(trajectory, t, cond)
 
-                # 2. predict model output
-                model_output = model(trajectory, t, cond)
-
-                # 3. 올바른 prev_timestep 계산: timestep 리스트의 다음 값 사용
-                if i + 1 < len(timesteps):
-                    prev_t = timesteps[i + 1]
-                else:
-                    prev_t = -1  # 마지막 step
-
-                # DDIM step 수식 직접 적용
-                alpha_prod_t = alphas_cumprod[t]
-                alpha_prod_t_prev = alphas_cumprod[prev_t] if prev_t >= 0 else final_alpha_cumprod
-                beta_prod_t = 1 - alpha_prod_t
-
-                # predicted x_0
-                if scheduler.config.prediction_type == "epsilon":
-                    pred_original_sample = (trajectory - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
-                elif scheduler.config.prediction_type == "sample":
-                    pred_original_sample = model_output
-                else:
-                    raise ValueError(f"Unsupported prediction_type: {scheduler.config.prediction_type}")
-
-                # clip predicted x_0
-                if scheduler.config.clip_sample:
-                    pred_original_sample = pred_original_sample.clamp(
-                        -scheduler.config.clip_sample_range, scheduler.config.clip_sample_range)
-
-                # recompute epsilon from clipped x_0
-                pred_epsilon = (trajectory - alpha_prod_t ** 0.5 * pred_original_sample) / beta_prod_t ** 0.5
-
-                # direction pointing to x_t (eta=0, deterministic DDIM)
-                pred_sample_direction = (1 - alpha_prod_t_prev) ** 0.5 * pred_epsilon
-
-                # x_{t-1}
-                trajectory = alpha_prod_t_prev ** 0.5 * pred_original_sample + pred_sample_direction
-
-                if return_intermediates:
-                    intermediates.append({
-                        'step': i,
-                        'timestep': int(t),
-                        'x_t': trajectory.detach().cpu(),
-                        'pred_x0': pred_original_sample.detach().cpu(),
-                        'pred_epsilon': model_output.detach().cpu(),
-                    })
-        else:
-            # 기존 방식: scheduler.set_timesteps + scheduler.step
-            scheduler.set_timesteps(self.num_inference_steps)
-
-            for i, t in enumerate(scheduler.timesteps):
-                trajectory[condition_mask] = condition_data[condition_mask]
-                model_output = model(trajectory, t, cond)
-
-                if return_intermediates:
-                    # pred_x0 계산
-                    alpha_prod_t = scheduler.alphas_cumprod[t]
-                    beta_prod_t = 1 - alpha_prod_t
-                    if scheduler.config.prediction_type == "epsilon":
-                        pred_x0 = (trajectory - beta_prod_t ** 0.5 * model_output) / alpha_prod_t ** 0.5
-                    else:
-                        pred_x0 = model_output
-                    intermediates.append({
-                        'step': i,
-                        'timestep': int(t),
-                        'x_t': trajectory.detach().cpu(),
-                        'pred_x0': pred_x0.detach().cpu(),
-                        'pred_epsilon': model_output.detach().cpu(),
-                    })
-
-                trajectory = scheduler.step(
-                    model_output, t, trajectory,
-                    generator=generator,
-                    **kwargs
-                    ).prev_sample
+            # 3. compute previous image: x_t -> x_t-1
+            trajectory = scheduler.step(
+                model_output, t, trajectory,
+                generator=generator,
+                **kwargs
+                ).prev_sample
 
         # finally make sure conditioning is enforced
         trajectory[condition_mask] = condition_data[condition_mask]
-
-        if return_intermediates:
-            return trajectory, intermediates
         return trajectory
 
 
-    def predict_action(self, obs_dict: Dict[str, torch.Tensor], return_intermediates=False) -> Dict[str, torch.Tensor]:
+    def predict_action(self, obs_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
         obs_dict: must include "obs" key
         result: must include "action" key
@@ -201,17 +126,11 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
         cond_mask = torch.zeros_like(cond_data, dtype=torch.bool)
 
         # run sampling
-        sample_result = self.conditional_sample(
+        nsample = self.conditional_sample(
             condition_data=cond_data,
             condition_mask=cond_mask,
             cond=obs_tokens,
-            return_intermediates=return_intermediates,
             **self.kwargs)
-
-        if return_intermediates:
-            nsample, intermediates = sample_result
-        else:
-            nsample = sample_result
 
         # unnormalize prediction
         assert nsample.shape == (B, self.action_horizon, self.action_dim)
@@ -221,13 +140,6 @@ class DiffusionTransformerTimmPolicy(BaseImagePolicy):
             'action': action_pred,
             'action_pred': action_pred
         }
-
-        if return_intermediates:
-            # unnormalize intermediate pred_x0 values too
-            for entry in intermediates:
-                entry['pred_x0_unnorm'] = self.normalizer['action'].unnormalize(
-                    entry['pred_x0'].to(self.device)).detach().cpu()
-            result['intermediates'] = intermediates
 
         return result
 

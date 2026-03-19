@@ -82,18 +82,10 @@ def load_model(ckpt_path, config, state):
     if cfg.training.use_ema:
         policy = workspace.ema_model
 
-    policy.num_inference_steps = config['model']['num_inference_steps']
-    custom_ts = config.get('model', {}).get('custom_timesteps', None)
     num_steps = config['model']['num_inference_steps']
-
-    if custom_ts is not None:
-        policy.custom_timesteps = list(custom_ts)
-        print(f"[INFO] Custom DDIM timesteps: {policy.custom_timesteps}")
-        state.gui_mode_label = "c2f"
-        state.gui_timesteps_str = f"timesteps: {custom_ts}"
-    else:
-        state.gui_mode_label = f"baseline {num_steps} step"
-        state.gui_timesteps_str = f"DDIM {num_steps} steps"
+    policy.num_inference_steps = num_steps
+    state.gui_mode_label = f"baseline {num_steps} step"
+    state.gui_timesteps_str = f"DDIM {num_steps} steps"
 
     rotation_repr = getattr(cfg.task, 'rotation_repr', 'rotation_6d')
     print(f"[Config] rotation_repr={rotation_repr}, action_shape={cfg.task.shape_meta.action.shape}")

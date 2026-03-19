@@ -181,12 +181,12 @@ class GravityCompensator:
         # FT IMU 경로에서만 이 플래그를 True로 설정해 좌표계/중력 보상 로직을 분기한다.
         self.use_ft_imu = False
     
-    def calibrate_baseline(self, imu_pipe, ft_reader, warmup_sec=5.0):
+    def calibrate_baseline(self, imu_source, ft_reader, warmup_sec=5.0):
         """
         베이스라인 데이터 수집 및 bias 계산
-        
+
         Args:
-            imu_pipe: RealSense IMU 파이프라인
+            imu_source: RSCapture with enable_imu=True (camera thread buffers IMU data)
             ft_reader: FT 센서 리더
             warmup_sec: 워밍업 시간 (초)
         """
@@ -197,15 +197,22 @@ class GravityCompensator:
         euler_list = []
         gravity_f_base_list = []
         gravity_t_base_list = []
-        
+
         # 워밍업: 고정된 상태로 여러 번 업데이트
         iters = int(warmup_sec * 50)
         for _ in trange(iters, desc="IMU Warmup"):
-            frames = imu_pipe.wait_for_frames()
-            acc0 = frames.first_or_default(rs.stream.accel).as_motion_frame().get_motion_data()
-            gyr0 = frames.first_or_default(rs.stream.gyro).as_motion_frame().get_motion_data()
-            acc0 = np.array([acc0.x, acc0.y, acc0.z], float)
-            gyr0 = np.array([gyr0.x, gyr0.y, gyr0.z], float)
+            if imu_source is not None:
+                imu_data = imu_source.wait_for_imu(timeout=1.0)
+                if imu_data is None:
+                    continue
+                acc0, gyr0 = imu_data
+            else:
+                # IMU 소스가 None일 경우 FT IMU의 값을 샘플링
+                ts_ft, acc_ft, gyro_ft = ft_reader.get_imu_data(timeout=1.0)
+                acc0, gyr0 = convert_ft_imu_to_rs_units_with_scale(
+                    acc_ft, gyro_ft, gyro_bias=self.ft_gyro_bias,
+                    gyro_scale=self.ft_gyro_scale, g_const=self.g_const
+                )
 
             self.q_prev = self.madgwick.updateIMU(self.q_prev, gyr=gyr0, acc=acc0)
             q_list.append(np.copy(self.q_prev))  # 쿼터니언 저장
@@ -258,7 +265,12 @@ class GravityCompensator:
         gt_mean = np.mean(gravity_t_base_list, axis=0)
         self.f_bias = f_mean - gf_mean
         self.t_bias = t_mean - gt_mean
-        
+
+        print(f"[GRAV CAL] f_mean (raw FT):     [{f_mean[0]:+.4f}, {f_mean[1]:+.4f}, {f_mean[2]:+.4f}]")
+        print(f"[GRAV CAL] gf_mean (pred grav):  [{gf_mean[0]:+.4f}, {gf_mean[1]:+.4f}, {gf_mean[2]:+.4f}]")
+        print(f"[GRAV CAL] f_bias (f-gf):        [{self.f_bias[0]:+.4f}, {self.f_bias[1]:+.4f}, {self.f_bias[2]:+.4f}]")
+        print(f"[GRAV CAL] t_bias:               [{self.t_bias[0]:+.4f}, {self.t_bias[1]:+.4f}, {self.t_bias[2]:+.4f}]")
+
         # 초기 IMU 상태 저장
         rot_imu_final = R.from_quat([self.q_prev[1], self.q_prev[2], self.q_prev[3], self.q_prev[0]])
         self.init_rot_imu = rot_imu_final
@@ -281,14 +293,14 @@ class GravityCompensator:
         # self.init_imu_tilt_angle = tilt_angle
         
     
-    def update_imu(self, imu_pipe):
-        """IMU 데이터 업데이트"""
-        if imu_pipe is None:
+    def update_imu(self, imu_source):
+        """IMU 데이터 업데이트. imu_source: RSCapture with enable_imu=True."""
+        if imu_source is None:
             return None, None
-            
-        imu_data = None
-        while imu_data is None:
-            imu_data = read_latest_imu(imu_pipe)
+
+        imu_data = imu_source.poll_imu()
+        if imu_data is None:
+            return None, None
         acc_vec, gyro_vec = imu_data
         self.q_prev = self.madgwick.updateIMU(self.q_prev, gyr=gyro_vec, acc=acc_vec)
         self.imu_count += 1

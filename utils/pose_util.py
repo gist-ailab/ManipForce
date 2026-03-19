@@ -113,3 +113,27 @@ def pose10d_to_mat(d10):
     out[...,:3,3] = pos
     out[...,3,3] = 1
     return out
+
+
+# ============================================================
+# Quaternion convention helpers (wxyz ↔ xyzw)
+# ============================================================
+def quat_wxyz_to_xyzw(q):
+    """[w,x,y,z] → [x,y,z,w] (scipy convention)."""
+    return np.array([q[1], q[2], q[3], q[0]])
+
+
+def quat_xyzw_to_wxyz(q):
+    """[x,y,z,w] → [w,x,y,z] (server convention)."""
+    return np.array([q[3], q[0], q[1], q[2]])
+
+
+def quaternion_multiply(q1, q2):
+    """Hamilton product, quaternion in [w, x, y, z] order."""
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    return np.array([
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2])

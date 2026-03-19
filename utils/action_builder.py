@@ -1,5 +1,4 @@
 """Action processing: coordinate transform, action queue, interpolated trajectory, target pose."""
-import time
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp as ScipySlerp
 
@@ -7,10 +6,9 @@ from utils.real_inference_util import convert_action_10d_to_8d, convert_action_7
 from utils.pose_util import quat_xyzw_to_wxyz
 
 
-def transform_action_to_world(pose, current_ee_pose, ft_data, config, state):
+def transform_action_to_world(pose, current_ee_pose, config):
     """Coordinate transform: model output (body-frame delta) → world-frame delta.
 
-    Legacy transform: R_mat_pos/R_mat_rot + per-axis scale + rot.inv().apply().
     ArUco body frame → Franka world frame.
     """
     current_quat = np.roll(current_ee_pose[3:], -1)  # [w,x,y,z] -> [x,y,z,w]
@@ -26,66 +24,6 @@ def transform_action_to_world(pose, current_ee_pose, ft_data, config, state):
     rel_quat = Rotation.from_matrix(R_new).as_quat()
 
     rel_pos = current_rot.inv().apply(rel_pos)
-
-    # Contact assist: FT 변화량(baseline 대비) 축별 offset 추가
-    ca = config.get('contact_assist', {})
-    if ca.get('enabled', False) and ft_data is not None:
-        ft_latest = ft_data[-1] if ft_data.ndim == 2 else ft_data
-        force_body = ft_latest[:3] - state.ca_ft_baseline[:3]
-
-        threshold_cfg = ca.get('force_threshold', 3.0)
-        if isinstance(threshold_cfg, (list, tuple)):
-            thresholds = np.array(threshold_cfg, dtype=np.float64)
-        else:
-            thresholds = np.array([threshold_cfg] * 3, dtype=np.float64)
-
-        force_norm = np.linalg.norm(force_body)
-        state.ca_force_body = force_body.copy()
-
-        hysteresis = ca.get('hysteresis', 0.5)
-        any_exceeded = any(abs(force_body[i]) > thresholds[i] for i in range(3))
-        any_below = all(abs(force_body[i]) < thresholds[i] * hysteresis for i in range(3))
-
-        if not hasattr(state, '_ca_contact_on'):
-            state._ca_contact_on = False
-        if state._ca_contact_on:
-            if any_below:
-                state._ca_contact_on = False
-        else:
-            if any_exceeded:
-                state._ca_contact_on = True
-
-        if state._ca_contact_on:
-            ca_mode = ca.get('mode', 'fixed_direction')
-
-            if ca_mode == 'force_direction':
-                gain = ca.get('gain', 0.0002)
-                max_offset = ca.get('max_offset', 0.005)
-                if force_norm > 0.01:
-                    force_dir = force_body / force_norm
-                    offset_mag = min(force_norm * gain, max_offset)
-                    offset_world = current_rot.inv().apply(force_dir * offset_mag)
-                else:
-                    offset_world = np.zeros(3)
-            else:
-                insert_dir = np.array(ca.get('insert_direction', [1, 0, 0]), dtype=np.float64)
-                insert_dir = insert_dir / np.linalg.norm(insert_dir)
-                insert_offset = ca.get('insert_offset', 0.003)
-                offset_world = insert_dir * insert_offset
-
-            rel_pos += offset_world
-            state.ca_active = True
-            state.ca_force_norm = force_norm
-            state.ca_offset_mm = offset_world * 1000
-            state.ca_force_dir_world = offset_world / np.linalg.norm(offset_world) if np.linalg.norm(offset_world) > 1e-6 else np.zeros(3)
-            state.ca_last_applied_time = time.time()
-            state.ca_apply_count += 1
-        else:
-            state.ca_active = False
-            state.ca_force_norm = force_norm
-            state.ca_offset_mm = np.zeros(3)
-    else:
-        state.ca_active = False
 
     return np.concatenate([rel_pos, rel_quat])
 
@@ -105,8 +43,8 @@ def build_action_queue(action, rotation_repr, config):
     return queue
 
 
-def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose, ft_now,
-                                  data_hz, control_hz, config, state):
+def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose,
+                                  data_hz, control_hz, config):
     """Build a dense trajectory by interpolating between action waypoints.
 
     Returns list of target poses (each shape (7,): [x,y,z, qx,qy,qz,qw]).
@@ -133,7 +71,7 @@ def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose, ft_n
     current_wp = waypoints[0].copy()
 
     for action_8d in action_queue:
-        transformed = transform_action_to_world(action_8d, current_ee_pose, ft_now, config, state)
+        transformed = transform_action_to_world(action_8d, current_ee_pose, config)
         if action_mode == 'delta':
             wp = current_wp.copy()
             wp[:3] += transformed[:3]
@@ -180,9 +118,9 @@ def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose, ft_n
 
 
 def compute_target_pose(action_8d, action_mode, current_ee_pose, prev_target_pose,
-                        ft_now, policy, config, state):
+                        policy, config):
     """Compute target pose from action. Returns (this_target_pose, transformed_action, debug_info)."""
-    transformed_action = transform_action_to_world(action_8d, current_ee_pose, ft_now, config, state)
+    transformed_action = transform_action_to_world(action_8d, current_ee_pose, config)
 
     debug_info = {}
 

@@ -13,7 +13,7 @@ from diffusion_policy.common.pytorch_util import dict_apply
 from utils.real_inference_util import get_real_gumi_obs_dict
 from utils.gripper_control import restore_precision_mode
 from utils.flask_pose_client import send_pose_command
-from utils.eval_logger import save_trial_result, save_diffusion_intermediates
+from utils.eval_logger import save_trial_result
 from utils.obs_builder import convert_torque_scale, get_ft_time_range, select_ft_window, build_obs_np
 from utils.gui_thread import check_keyboard_input
 from utils.hardware_init import compute_initial_pose, reset_to_home
@@ -23,17 +23,10 @@ from utils.observe import print_observe_table, save_observe_csv
 def prefill_obs_history(state, config, camera, additional_cam, cam_lock=None):
     """Policy 진입 전: 카메라 링 버퍼가 충분히 차도록 대기."""
     ds = int(config['image'].get('down_sample_steps', 1))
-    obs_ds_raw = config['image'].get('obs_down_sample_steps', ds)
-    if str(obs_ds_raw).lower() == 'inference':
-        # inference 모드: 이전 프레임 초기화, 짧은 대기만
-        state.prev_inference_cam1 = None
-        state.prev_inference_cam2 = None
-        time.sleep(0.2)
-    else:
-        obs_ds = int(obs_ds_raw)
-        fps = config.get('action', {}).get('data_hz', 30)
-        wait_sec = obs_ds / fps * config['image']['history_length'] + 0.1
-        time.sleep(wait_sec)
+    obs_ds = int(config['image'].get('obs_down_sample_steps', ds))
+    fps = config.get('action', {}).get('data_hz', 30)
+    wait_sec = obs_ds / fps * config['image']['history_length'] + 0.1
+    time.sleep(wait_sec)
 
 
 def _sample_pose_by_time(pose_buffer, target_ts):
@@ -73,15 +66,6 @@ def _compute_pose_wrt_start(poses, start_pose):
     return result
 
 
-def _make_fixed_ft(config):
-    """ft_sensor.mode == 'fixed' 일 때 고정 FT 값 생성."""
-    ft_cfg = config['ft_sensor']
-    target_frames = ft_cfg['obs_horizon']
-    fixed_vals = np.array(ft_cfg.get('fixed_values', [0.0] * 6), dtype=np.float32)
-    ft_sel = np.tile(fixed_vals, (target_frames, 1))
-    ts_sel = np.zeros(target_frames, dtype=np.float64)
-    return ft_sel, ts_sel
-
 
 def get_obs(state, config, camera, additional_cam, cam_lock=None,
             ft_collector=None, last_executed_action=None):
@@ -94,62 +78,29 @@ def get_obs(state, config, camera, additional_cam, cam_lock=None,
     """
     hist_len = config['image']['history_length']
     ds = int(config['image'].get('down_sample_steps', 1))
-    obs_ds_raw = config['image'].get('obs_down_sample_steps', ds)
+    obs_ds = int(config['image'].get('obs_down_sample_steps', ds))
     fps = config.get('action', {}).get('data_hz', 30)
+    interval = obs_ds / fps
 
-    # obs_down_sample_steps: int → 시간 기반 샘플링, 'inference' → v2 방식 (인퍼런스 간 프레임)
-    inference_mode = (str(obs_ds_raw).lower() == 'inference')
+    # 최신 카메라 프레임의 실제 timestamp를 기준으로 샘플링
+    latest = camera.get_latest_rgb()
+    now = latest[0] if latest is not None else time.time()
 
-    if inference_mode:
-        # v2 방식: 최신 프레임 1장 캡처 + 이전 inference 프레임 재사용
-        latest1 = camera.get_latest_rgb()
-        latest2 = additional_cam.get_latest_rgb()
-        if latest1 is None or latest2 is None:
-            time.sleep(0.1)
-            latest1 = camera.get_latest_rgb()
-            latest2 = additional_cam.get_latest_rgb()
+    # Time-based sampling: [now - (hist_len-1)*interval, ..., now]
+    target_ts = [now - (hist_len - 1 - i) * interval for i in range(hist_len)]
 
-        now_ts, now_img1 = latest1
-        _, now_img2 = latest2
+    frames_cam1 = camera.get_frames_by_time(target_ts)
+    frames_cam2 = additional_cam.get_frames_by_time(target_ts)
 
-        if state.prev_inference_cam1 is not None:
-            prev_ts1, prev_img1 = state.prev_inference_cam1
-            _, prev_img2 = state.prev_inference_cam2
-            cam1_imgs = [prev_img1, now_img1]
-            cam2_imgs = [prev_img2, now_img2]
-            img_timestamps = [prev_ts1, now_ts]
-        else:
-            # 첫 inference: 같은 프레임 복제
-            cam1_imgs = [now_img1, now_img1]
-            cam2_imgs = [now_img2, now_img2]
-            img_timestamps = [now_ts, now_ts]
-
-        # 현재 프레임을 다음 inference용으로 저장
-        state.prev_inference_cam1 = (now_ts, now_img1)
-        state.prev_inference_cam2 = (now_ts, now_img2)
-    else:
-        obs_ds = int(obs_ds_raw)
-        interval = obs_ds / fps
-
-        # 최신 카메라 프레임의 실제 timestamp를 기준으로 샘플링
-        latest = camera.get_latest_rgb()
-        now = latest[0] if latest is not None else time.time()
-
-        # Time-based sampling: [now - (hist_len-1)*interval, ..., now]
-        target_ts = [now - (hist_len - 1 - i) * interval for i in range(hist_len)]
-
+    if frames_cam1 is None or frames_cam2 is None:
+        # Fallback: cameras not ready yet, wait and retry
+        time.sleep(0.1)
         frames_cam1 = camera.get_frames_by_time(target_ts)
         frames_cam2 = additional_cam.get_frames_by_time(target_ts)
 
-        if frames_cam1 is None or frames_cam2 is None:
-            # Fallback: cameras not ready yet, wait and retry
-            time.sleep(0.1)
-            frames_cam1 = camera.get_frames_by_time(target_ts)
-            frames_cam2 = additional_cam.get_frames_by_time(target_ts)
-
-        img_timestamps = [f[0] for f in frames_cam1]
-        cam1_imgs = [f[1] for f in frames_cam1]
-        cam2_imgs = [f[1] for f in frames_cam2]
+    img_timestamps = [f[0] for f in frames_cam1]
+    cam1_imgs = [f[1] for f in frames_cam1]
+    cam2_imgs = [f[1] for f in frames_cam2]
 
     # Update state for display
     state.prev_frames_cam1.clear()
@@ -160,60 +111,40 @@ def get_obs(state, config, camera, additional_cam, cam_lock=None,
         state.prev_frames_cam2.append(cam2_imgs[i])
         state.prev_timestamps.append(img_timestamps[i])
 
-    ft_mode = config['ft_sensor'].get('mode', 'sensor')
+    # FT sensor (sensor mode only: bias 제거 + optional offset)
+    ft_buf, ts_buf = ft_collector.window(config['ft_sensor']['buffer_length'])
+    t0, t1 = get_ft_time_range(state.prev_timestamps, config)
+    state.ft_model_t0 = t0
+    state.ft_model_t1 = t1
+    ft_sel, ts_sel = select_ft_window(ft_buf, ts_buf, t0, t1, config)
 
-    if ft_mode == 'fixed':
-        # 고정 FT 값 사용 (센서 무시)
-        ft_sel, ts_sel = _make_fixed_ft(config)
-        ft_raw_for_ca = ft_sel.copy()
-    elif ft_mode == 'raw':
-        # v2 호환: raw FT 그대로 사용 (bias/offset 없음)
-        ft_buf, ts_buf = ft_collector.window(config['ft_sensor']['buffer_length'])
-        t0, t1 = get_ft_time_range(state.prev_timestamps, config)
-        state.ft_model_t0 = t0
-        state.ft_model_t1 = t1
-        ft_sel, ts_sel = select_ft_window(ft_buf, ts_buf, t0, t1, config)
-        ft_raw_for_ca = ft_sel.copy()
-    else:
-        # sensor 모드: bias 제거 + optional offset
-        ft_buf, ts_buf = ft_collector.window(config['ft_sensor']['buffer_length'])
-        t0, t1 = get_ft_time_range(state.prev_timestamps, config)
-        state.ft_model_t0 = t0
-        state.ft_model_t1 = t1
-        ft_sel, ts_sel = select_ft_window(ft_buf, ts_buf, t0, t1, config)
+    # FT[5:100] recalibration: 학습과 동일한 정규화 방식 재현
+    if not state.ft_recalib_done and state.ft_recalib_start_time is not None:
+        new_mask = ts_buf > state.ft_recalib_start_time
+        if new_mask.any():
+            new_ft = ft_buf[new_mask]
+            n_new = len(new_ft)
+            if n_new >= 100:
+                recalib_bias = new_ft[5:100].mean(axis=0).astype(np.float32)
+                old_bias = state.gripping_ft_bias.copy()
+                state.gripping_ft_bias = recalib_bias
+                state.ft_recalib_done = True
+                diff = recalib_bias - old_bias
+                print(f"\n[FT RECALIB] FT[5:100] bias 재계산 완료 (N={n_new})")
+                print(f"  이전 bias: F=[{old_bias[0]:+.3f},{old_bias[1]:+.3f},{old_bias[2]:+.3f}] "
+                      f"T=[{old_bias[3]:+.4f},{old_bias[4]:+.4f},{old_bias[5]:+.4f}]")
+                print(f"  새 bias:   F=[{recalib_bias[0]:+.3f},{recalib_bias[1]:+.3f},{recalib_bias[2]:+.3f}] "
+                      f"T=[{recalib_bias[3]:+.4f},{recalib_bias[4]:+.4f},{recalib_bias[5]:+.4f}]")
+                print(f"  차이:      F=[{diff[0]:+.3f},{diff[1]:+.3f},{diff[2]:+.3f}] "
+                      f"T=[{diff[3]:+.4f},{diff[4]:+.4f},{diff[5]:+.4f}]")
 
-        ft_raw_for_ca = ft_sel.copy()
+    # Subtract gripping bias (학습 zarr와 동일: 에피소드 초기 FT 평균 제거)
+    ft_sel = ft_sel - state.gripping_ft_bias
 
-        # FT[5:100] recalibration: 학습과 동일한 정규화 방식 재현
-        # 정책 시작 후 FT 샘플을 모아서 [5:100] mean을 bias로 재설정
-        if not state.ft_recalib_done and state.ft_recalib_start_time is not None:
-            # recalib 시작 이후의 FT 샘플 수집
-            new_mask = ts_buf > state.ft_recalib_start_time
-            if new_mask.any():
-                new_ft = ft_buf[new_mask]
-                n_new = len(new_ft)
-                if n_new >= 100:
-                    # 학습과 동일: FT[5:100] mean을 bias로 사용
-                    recalib_bias = new_ft[5:100].mean(axis=0).astype(np.float32)
-                    old_bias = state.gripping_ft_bias.copy()
-                    state.gripping_ft_bias = recalib_bias
-                    state.ft_recalib_done = True
-                    diff = recalib_bias - old_bias
-                    print(f"\n[FT RECALIB] FT[5:100] bias 재계산 완료 (N={n_new})")
-                    print(f"  이전 bias: F=[{old_bias[0]:+.3f},{old_bias[1]:+.3f},{old_bias[2]:+.3f}] "
-                          f"T=[{old_bias[3]:+.4f},{old_bias[4]:+.4f},{old_bias[5]:+.4f}]")
-                    print(f"  새 bias:   F=[{recalib_bias[0]:+.3f},{recalib_bias[1]:+.3f},{recalib_bias[2]:+.3f}] "
-                          f"T=[{recalib_bias[3]:+.4f},{recalib_bias[4]:+.4f},{recalib_bias[5]:+.4f}]")
-                    print(f"  차이:      F=[{diff[0]:+.3f},{diff[1]:+.3f},{diff[2]:+.3f}] "
-                          f"T=[{diff[3]:+.4f},{diff[4]:+.4f},{diff[5]:+.4f}]")
-
-        # Subtract gripping bias (학습 zarr와 동일: 에피소드 초기 FT 평균 제거)
-        ft_sel = ft_sel - state.gripping_ft_bias
-
-        # 실시간 FT에 training 전체 평균을 더해서 offset 적용
-        ft_offset = config['ft_sensor'].get('fixed_values', None)
-        if ft_offset is not None:
-            ft_sel = ft_sel + np.array(ft_offset, dtype=np.float32)
+    # 실시간 FT에 training 전체 평균을 더해서 offset 적용
+    ft_offset = config['ft_sensor'].get('fixed_values', None)
+    if ft_offset is not None:
+        ft_sel = ft_sel + np.array(ft_offset, dtype=np.float32)
 
     state.ft_model_input = ft_sel[-1].copy() if ft_sel.ndim == 2 else ft_sel.copy()
     state.ft_model_input_history.append((ts_sel.copy(), ft_sel.copy()))
@@ -230,12 +161,11 @@ def get_obs(state, config, camera, additional_cam, cam_lock=None,
             pose_wrt_start = _compute_pose_wrt_start(sampled_poses, state.policy_start_pose)
             obs['pose_wrt_start'] = pose_wrt_start
 
-    # Return values for compatibility (img1, img2, ft_raw, img1_bgr, img2_bgr, ft_ts)
     f1_rgb = cam1_imgs[-1]
     f2_rgb = cam2_imgs[-1]
     f1_bgr = cv2.cvtColor(f1_rgb, cv2.COLOR_RGB2BGR)
     f2_bgr = cv2.cvtColor(f2_rgb, cv2.COLOR_RGB2BGR)
-    return obs, f1_rgb, f2_rgb, ft_raw_for_ca, f1_bgr, f2_bgr, ts_sel
+    return obs, f1_rgb, f2_rgb, f1_bgr, f2_bgr, ts_sel
 
 
 def reset_policy_attrs(policy):
@@ -279,13 +209,11 @@ def wait_for_result_key(state, config, client_socket, franka_api, key_queue):
             if ek == 's':
                 state.task_state = 'SUCCESS'
                 save_trial_result(success=True, state=state, config=config)
-                save_diffusion_intermediates(state)
                 decided = True
                 print("[RESULT] SUCCESS — 'e'를 눌러 종료")
             elif ek == 'f':
                 state.task_state = 'FAIL'
                 save_trial_result(success=False, state=state, config=config)
-                save_diffusion_intermediates(state)
                 decided = True
                 print("[RESULT] FAIL — 'e'를 눌러 종료")
             elif ek == 't':
@@ -316,7 +244,6 @@ def handle_result_key(key, state, config, client_socket, franka_api, policy,
     """
     state.task_state = 'SUCCESS' if key == 's' else 'FAIL'
     save_trial_result(success=(key == 's'), state=state, config=config)
-    save_diffusion_intermediates(state)
     print(f"[RESULT] {state.task_state} — 'e'를 눌러 종료")
     wait_for_exit_key(state, client_socket, franka_api, key_queue)
     new_initial = compute_initial_pose(config_path, config)
@@ -331,7 +258,7 @@ def handle_result_key(key, state, config, client_socket, franka_api, policy,
 
 def run_inference(policy, obs_np, cfg, device, obs_pose_rep, state, config):
     """Run model forward pass and return (action_np, result_dict).
-    Updates state.model_time_accum / model_call_count / diffusion_intermediates.
+    Updates state.model_time_accum / model_call_count.
     """
     obs_dict_np = get_real_gumi_obs_dict(
         env_obs=obs_np, shape_meta=cfg.task.shape_meta,
@@ -339,29 +266,13 @@ def run_inference(policy, obs_np, cfg, device, obs_pose_rep, state, config):
     obs_dict = dict_apply(obs_dict_np,
                           lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
 
-    model_cfg = config.get('model', {})
-    n_ensemble = model_cfg.get('ensemble', 1)
-
     t_model_start = time.time()
-    if n_ensemble > 1:
-        obs_batch = dict_apply(obs_dict, lambda x: x.repeat(n_ensemble, *([1] * (x.ndim - 1))))
-        result = policy.predict_action(obs_batch)
-        actions_batch = result['action_pred'].detach().to('cpu').numpy()
-        action = actions_batch.mean(axis=0)
-    else:
-        result = policy.predict_action(obs_dict, return_intermediates=state.save_intermediates)
-        action = result['action_pred'][0].detach().to('cpu').numpy()
+    result = policy.predict_action(obs_dict)
+    action = result['action_pred'][0].detach().to('cpu').numpy()
 
     t_model_end = time.time()
     state.model_time_accum += (t_model_end - t_model_start)
     state.model_call_count += 1
-
-    if state.save_intermediates and 'intermediates' in result:
-        state.diffusion_intermediates.append({
-            'step_idx': state.total_inference_steps,
-            'timestamp': time.time(),
-            'intermediates': result['intermediates'],
-        })
 
     if 'delta_p' in result:
         delta_p = result['delta_p'][0].detach().to('cpu').numpy()[0]
@@ -397,33 +308,22 @@ def warmup_policy(policy, state, config, camera, additional_cam, cam_lock,
     policy.reset()
 
     # Measure gripping FT bias (학습 zarr의 compensate_gripping_force_per_episode와 동일)
-    ft_mode = config['ft_sensor'].get('mode', 'sensor')
-    if ft_mode == 'fixed':
-        state.gripping_ft_bias = np.zeros(6, dtype=np.float32)
-        fixed_vals = config['ft_sensor'].get('fixed_values', [0.0] * 6)
-        print(f"[FT] Fixed mode — values: {fixed_vals}")
-    elif ft_mode == 'raw':
-        state.gripping_ft_bias = np.zeros(6, dtype=np.float32)
-        print(f"[FT] Raw mode — no bias subtraction (v2 compatible)")
+    print("[FT BIAS] 안정화 대기 중 (2s)...")
+    time.sleep(2.0)
+    ft_buf, _ = ft_collector.window(config['ft_sensor']['buffer_length'])
+    if len(ft_buf) >= 5:
+        state.gripping_ft_bias = ft_buf[-30:].mean(axis=0).astype(np.float32)
     else:
-        # 로봇 정지 후 FT 안정화 대기 — 버퍼에 이동 중 값이 남아있을 수 있음
-        print("[FT BIAS] 안정화 대기 중 (2s)...")
-        time.sleep(2.0)
-        ft_buf, _ = ft_collector.window(config['ft_sensor']['buffer_length'])
-        if len(ft_buf) >= 5:
-            state.gripping_ft_bias = ft_buf[-30:].mean(axis=0).astype(np.float32)
-        else:
-            state.gripping_ft_bias = np.zeros(6, dtype=np.float32)
-        print(f"[FT BIAS] gripping bias: F=[{state.gripping_ft_bias[0]:+.2f},{state.gripping_ft_bias[1]:+.2f},{state.gripping_ft_bias[2]:+.2f}]N  "
-              f"T=[{state.gripping_ft_bias[3]:+.3f},{state.gripping_ft_bias[4]:+.3f},{state.gripping_ft_bias[5]:+.3f}]")
+        state.gripping_ft_bias = np.zeros(6, dtype=np.float32)
+    print(f"[FT BIAS] gripping bias: F=[{state.gripping_ft_bias[0]:+.2f},{state.gripping_ft_bias[1]:+.2f},{state.gripping_ft_bias[2]:+.2f}]N  "
+          f"T=[{state.gripping_ft_bias[3]:+.3f},{state.gripping_ft_bias[4]:+.3f},{state.gripping_ft_bias[5]:+.3f}]")
 
     # FT recalibration 시작 시점 기록 (학습의 FT[5:100] mean 방식 재현)
-    if ft_mode not in ('fixed', 'raw'):
-        ft_buf_now, ts_buf_now = ft_collector.window(1)
-        if len(ts_buf_now) > 0:
-            state.ft_recalib_start_time = ts_buf_now[-1]
-        state.ft_recalib_done = False
-        state.ft_recalib_buffer = []
+    ft_buf_now, ts_buf_now = ft_collector.window(1)
+    if len(ts_buf_now) > 0:
+        state.ft_recalib_start_time = ts_buf_now[-1]
+    state.ft_recalib_done = False
+    state.ft_recalib_buffer = []
 
     print("Warming up policy inference")
     obs_np, *_ = get_obs(state, config, camera, additional_cam, cam_lock,
@@ -472,25 +372,16 @@ def toggle_observe_mode(state, franka_api, config):
 
 
 def check_ft_contact(state, ft_collector, config=None):
-    """FT contact detection (CA 독립). force threshold 기반으로 접촉 감지."""
+    """FT contact detection. force threshold 기반으로 접촉 감지."""
     ft_buf_check, _ = ft_collector.window(1)
     if len(ft_buf_check) > 0:
         state.ft_latest = ft_buf_check[-1]
 
     # baseline 대비 force 변화량
-    force_delta = state.ft_latest[:3] - state.ca_ft_baseline[:3]
+    force_delta = state.ft_latest[:3] - state.gripping_ft_bias[:3]
     ft_force_norm = float(np.linalg.norm(force_delta))
 
-    # contact threshold: config에서 가져오거나 기본값 사용
-    if config is not None:
-        ca_cfg = config.get('contact_assist', {})
-        thr_cfg = ca_cfg.get('force_threshold', 3.0)
-        if isinstance(thr_cfg, (list, tuple)):
-            thresholds = np.array(thr_cfg, dtype=np.float64)
-        else:
-            thresholds = np.array([thr_cfg] * 3, dtype=np.float64)
-    else:
-        thresholds = np.array([3.0, 3.0, 3.0])
+    thresholds = np.array([3.0, 3.0, 3.0])
 
     contact_detected = any(abs(force_delta[i]) > thresholds[i] for i in range(3))
 

@@ -35,9 +35,6 @@ class EvalState:
         self.output_base = cfg.get('paths', {}).get('output_dir', 'eval_results')
         self.output_dir = '.'
 
-        # diffusion intermediates
-        self.diffusion_intermediates = []
-        self.save_intermediates = cfg.get('model', {}).get('save_intermediates', False)
         self.headless = cfg.get('debug', {}).get('headless', False)
 
         # FT
@@ -89,15 +86,6 @@ class EvalState:
         self.last_target_pose = None
         self.last_current_ee = None
 
-        # contact assist
-        self.ca_active = False
-        self.ca_force_norm = 0.0
-        self.ca_offset_mm = np.zeros(3)
-        self.ca_force_dir_world = np.zeros(3)
-        self.ca_force_body = np.zeros(3)
-        self.ca_ft_baseline = np.zeros(6, dtype=np.float32)
-        self.ca_last_applied_time = 0.0  # 마지막 CA 적용 시각 (GUI 표시 유지용)
-        self.ca_apply_count = 0  # CA 적용 총 횟수
         self.ft_model_input = np.zeros(6, dtype=np.float32)
         self.ft_model_input_history = []  # list of (timestamp, ft_6d) for graph overlay
 
@@ -110,10 +98,6 @@ class EvalState:
 
         # EE pose ring buffer for pose_wrt_start: (timestamp, 7D pose) pairs
         self.ee_pose_buffer = deque(maxlen=60)  # ~2sec at 30Hz
-
-        # obs_down_sample_steps == 'inference' 모드: 이전 inference 프레임 저장
-        self.prev_inference_cam1 = None  # (timestamp, rgb_array)
-        self.prev_inference_cam2 = None
 
         # current mode (GUI reads this)
         self.current_mode = 'teleop'
@@ -129,9 +113,8 @@ class EvalState:
         mode_tag = self.gui_mode_label.replace(' ', '_') if self.gui_mode_label else 'unknown'
         chunk = config['action'].get('chunk_steps', 1)
         chunk_tag = f"{chunk}step" if chunk > 1 else "1step"
-        sync_tag = "sync" if config.get('control', {}).get('sync_mode', False) else "async"
         action_mode = config['action'].get('action_mode', 'delta')
-        sub_dir = f"{mode_tag}_{action_mode}_{chunk_tag}_{sync_tag}"
+        sub_dir = f"{mode_tag}_{action_mode}_{chunk_tag}"
         self.output_dir = os.path.join(self.output_base, task_name, sub_dir)
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -147,7 +130,6 @@ class EvalState:
         self.contact_time = None
         self.insert_step = None
         self.insert_time = None
-        self.diffusion_intermediates = []
         self.model_time_accum = 0.0
         self.model_call_count = 0
         self.ft_model_input_history = []
@@ -155,9 +137,6 @@ class EvalState:
         self.ft_recalib_done = False
         self.ft_recalib_start_time = None
         self.ft_recalib_buffer = []
-        # reset inference-mode image history
-        self.prev_inference_cam1 = None
-        self.prev_inference_cam2 = None
         # reset interpolation queue
         self.interp_queue = []
         self.interp_idx = 0

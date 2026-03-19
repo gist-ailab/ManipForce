@@ -194,10 +194,12 @@ class IMUCapture:
         self.cfg.disable_all_streams()
 
 class RSCapture:
-    def __init__(self, name, serial_number, dim=(1280, 800), fps=30, depth=False, auto_start=True):
+    def __init__(self, name, serial_number, dim=(1280, 800), fps=30, depth=False, auto_start=True,
+                 buffer_size=60, enable_imu=False):
         self.name = name
         self.serial_number = serial_number
         self.depth = depth
+        self.enable_imu = enable_imu
         self.dim = dim
         self.fps = fps
         self.pipe = rs.pipeline()
@@ -207,39 +209,131 @@ class RSCapture:
         self.cfg.enable_stream(rs.stream.color, dim[0], dim[1], rs.format.bgr8, fps)
         if self.depth:
             self.cfg.enable_stream(rs.stream.depth, dim[0], dim[1], rs.format.z16, fps)
-        
+        # IMU는 파이프라인에 포함하지 않음 — motion sensor callback으로 별도 수집
+
         # Threading
         self.running = False
         self.thread = None
         self.latest_frame = None
         self.latest_display_frame = None
         self.lock = threading.Lock()
+        self._motion_sensor = None
+
+        # Ring buffer: (timestamp, rgb_frame) pairs for time-based sampling
+        from collections import deque
+        self._frame_buffer = deque(maxlen=buffer_size)
+        self._buf_lock = threading.Lock()
+
+        # IMU buffer: motion sensor callback으로 채워짐
+        if self.enable_imu:
+            self._imu_buf = deque(maxlen=200)
+            self._imu_lock = threading.Lock()
+            self._latest_accel = None
+            self._latest_gyro = None
 
         if auto_start:
             self.start()
 
     def start(self):
         if self.running: return self
-        self.profile = self.pipe.start(self.cfg)
+        try:
+            self.profile = self.pipe.start(self.cfg)
+        except RuntimeError as e:
+            if 'busy' in str(e).lower() or 'errno=16' in str(e):
+                print(f"[RS {self.name}] Device busy, performing hardware reset...")
+                self._hardware_reset()
+                time.sleep(2)
+                self.pipe = rs.pipeline()
+                self.cfg = rs.config()
+                self.cfg.enable_device(self.serial_number)
+                self.cfg.enable_stream(rs.stream.color, self.dim[0], self.dim[1], rs.format.bgr8, self.fps)
+                if self.depth:
+                    self.cfg.enable_stream(rs.stream.depth, self.dim[0], self.dim[1], rs.format.z16, self.fps)
+                self.profile = self.pipe.start(self.cfg)
+            else:
+                raise
         self.sensor = self.profile.get_device().first_depth_sensor()
         self.sensor.set_option(rs.option.enable_auto_exposure, 0)
         self.sensor.set_option(rs.option.exposure, 10000)
-        
+
         align_to = rs.stream.color
         self.align = rs.align(align_to)
-        
+
+        # IMU는 start_imu()로 별도 시작 (init_hardware에서 카메라 안정화 후 호출)
+
         self.running = True
         self.thread = threading.Thread(target=self._update, daemon=True)
         self.thread.start()
         return self
 
+    def start_imu(self):
+        """카메라 안정화 후 호출: motion sensor를 callback으로 시작."""
+        if not self.enable_imu:
+            return
+        self._start_motion_sensor()
+
+    def _start_motion_sensor(self):
+        """파이프라인과 별개로 motion sensor를 callback으로 시작."""
+        device = self.profile.get_device()
+        motion_sensor = None
+        for s in device.sensors:
+            if s.get_info(rs.camera_info.name) == "Motion Module":
+                motion_sensor = s
+                break
+        if motion_sensor is None:
+            print(f"[RS {self.name}] Motion Module not found, IMU disabled")
+            self.enable_imu = False
+            return
+
+        # accel/gyro 프로필 선택
+        profiles = []
+        for p in motion_sensor.get_stream_profiles():
+            if p.stream_type() == rs.stream.accel:
+                profiles.append(p)
+                break
+        for p in motion_sensor.get_stream_profiles():
+            if p.stream_type() == rs.stream.gyro:
+                profiles.append(p)
+                break
+
+        def _imu_callback(frame):
+            if not frame.is_motion_frame():
+                return
+            mf = frame.as_motion_frame()
+            data = mf.get_motion_data()
+            vec = np.array([data.x, data.y, data.z], dtype=np.float64)
+            with self._imu_lock:
+                if mf.get_profile().stream_type() == rs.stream.accel:
+                    self._latest_accel = vec
+                else:
+                    self._latest_gyro = vec
+                if self._latest_accel is not None and self._latest_gyro is not None:
+                    self._imu_buf.append((self._latest_accel.copy(), self._latest_gyro.copy()))
+
+        motion_sensor.open(profiles)
+        motion_sensor.start(_imu_callback)
+        self._motion_sensor = motion_sensor
+        print(f"[RS {self.name}] Motion sensor started (callback mode)")
+
+    def _hardware_reset(self):
+        """Reset the RealSense device via USB to release busy state."""
+        try:
+            ctx = rs.context()
+            for dev in ctx.devices:
+                if dev.get_info(rs.camera_info.serial_number) == self.serial_number:
+                    print(f"[RS {self.name}] Hardware reset: {self.serial_number}")
+                    dev.hardware_reset()
+                    return
+        except Exception as e:
+            print(f"[RS {self.name}] Hardware reset failed: {e}")
+
     def _update(self):
         while self.running:
             try:
                 frames = self.pipe.wait_for_frames(timeout_ms=1000)
-                acq_time = time.time() # 프레임 획득 즉시 시간 기록
+                acq_time = time.time()
                 if not frames: continue
-                
+
                 aligned_frames = self.align.process(frames)
                 color_frame = aligned_frames.get_color_frame()
                 if not color_frame: continue
@@ -256,6 +350,10 @@ class RSCapture:
                 with self.lock:
                     self.latest_frame = result
                     self.latest_acq_time = acq_time
+                # Ring buffer: store BGR image + timestamp
+                rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                with self._buf_lock:
+                    self._frame_buffer.append((acq_time, rgb))
             except Exception as e:
                 if self.running: # 종료 중이 아닐 때만 출력
                     print(f"[RS {self.name}] Error: {e}")
@@ -275,13 +373,84 @@ class RSCapture:
             
         return True, (frame, display, acq_time)
 
+    def get_frames_by_time(self, timestamps):
+        """Return list of (timestamp, rgb_frame) closest to each requested timestamp.
+
+        Args:
+            timestamps: list/array of target timestamps (unix time)
+        Returns:
+            list of (actual_timestamp, rgb_ndarray) tuples
+        """
+        with self._buf_lock:
+            if not self._frame_buffer:
+                return None
+            buf = list(self._frame_buffer)
+
+        buf_ts = np.array([b[0] for b in buf])
+        results = []
+        for t in timestamps:
+            idx = np.argmin(np.abs(buf_ts - t))
+            results.append(buf[idx])
+        return results
+
+    def get_latest_rgb(self):
+        """Return (timestamp, rgb_frame) of the most recent frame."""
+        with self._buf_lock:
+            if not self._frame_buffer:
+                return None
+            return self._frame_buffer[-1]
+
+    def poll_imu(self):
+        """Return latest (acc, gyro) tuple or None. Non-consuming."""
+        if not self.enable_imu:
+            return None
+        with self._imu_lock:
+            if self._imu_buf:
+                return self._imu_buf[-1]
+        return None
+
+    def wait_for_imu(self, timeout=1.0):
+        """Consume next IMU sample from buffer. Blocks up to timeout. Returns (acc, gyro) or None."""
+        if not self.enable_imu:
+            return None
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._imu_lock:
+                if self._imu_buf:
+                    return self._imu_buf.popleft()
+            time.sleep(0.002)
+        return None
+
     def close(self):
+        if not self.running and self.thread is None:
+            return
         self.running = False
         if self.thread:
-            self.thread.join(timeout=1.0)
-        self.pipe.stop()
-        self.cfg.disable_all_streams()
-        
+            self.thread.join(timeout=2.0)
+            self.thread = None
+        # Motion sensor (IMU callback) 정지
+        if self._motion_sensor is not None:
+            try:
+                self._motion_sensor.stop()
+                self._motion_sensor.close()
+            except Exception:
+                pass
+            self._motion_sensor = None
+        try:
+            self.pipe.stop()
+        except Exception:
+            pass
+        try:
+            self.cfg.disable_all_streams()
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
 class AzureImageCapture:
     def __init__(self):
         self.k4a = None
