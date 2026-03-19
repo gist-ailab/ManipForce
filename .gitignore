@@ -209,6 +209,8 @@ marimo/_lsp/
 __marimo__/
 
 # Custom
+eval_results/
+analysis/
 data/
 wandb/
 outputs/
