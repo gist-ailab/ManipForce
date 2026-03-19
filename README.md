@@ -40,7 +40,7 @@ python scripts/processing/get_wrist_pose.py --data_path data/<your_task> --visua
 python scripts/processing/pose_refinement.py --data_path data/<your_task>
 
 # Step 5: Convert processed data to Zarr format
-python scripts/processing/change_to_zarr.py --data_path data/<your_task> --output_path data/<your_task>.zarr
+python scripts/processing/change_to_zarr.py --data_path /home/geonhyup/Workspace/ManipForce/data/11 --output_path /home/geonhyup/Workspace/ManipForce/data/11.zarr
 ```
 
 
