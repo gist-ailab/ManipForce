@@ -1,4 +1,4 @@
-# GUMI Multimodal Inference Configuration
+# Gear Insertion Evaluation Configuration
 
 # Camera settings
 camera:
@@ -17,42 +17,45 @@ camera:
 robot:
   server_ip: '172.27.190.125'
   server_port: 4999
-  initial_pose: [0.48, -0.02, 0.14, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
+  initial_pose: [0.54, 0.02, -0.05, 0.9907264, -0.021747975, 0.13380258, -0.009225016]  # [x, y, z, qw, qx, qy, qz]
   random_pos_range: 0.02
-  max_pos_speed: 0.7  # m/s
-  max_rot_speed: 0.7  # rad/s
+  max_pos_speed: 0.7   # m/s
+  max_rot_speed: 0.7   # rad/s
   initial_tilt_axis: 'y'
   initial_tilt_deg: 0.0
+  gear_insertion_z_threshold: -0.17  # EE z가 이 값 아래로 내려가면 삽입 완료 감지
+  reset_lift_z: 0.05  # reset 시 현재 위치에서 z방향으로 올린 후 home 이동 (m)
 
 # Control parameters
 control:
   frequency: 200.0  # Hz
-  command_latency: 0.02  # seconds
-  action_exec_latency: 0.02  # seconds
+  sync_mode: false   # true: /pose_sync (도달 대기), false: /pose (비동기)
 
 # Image processing
 image:
-  history_length: 2  # IMG_HIST
-  target_resolution: [256, 256]  # [width, height]
+  history_length: 2       # IMG_HIST
+  down_sample_steps: 3    # 학습 config obs_down_sample_steps와 동일
+  # obs_down_sample_steps: inference  # v2 방식: 인퍼런스마다 1장 캡처, 이전 프레임 재사용
+  target_resolution: [256, 256]
 
 # Action processing
 action:
-  position_xy_scale: 2 # image only 0.5, lowdim 0.1
-  position_z_scale: 2 # image only 0.5, lowdim 0.1
-  rotation_xy_scale: 2  # X,Y axis rotation scaling
-  rotation_z_scale: 2 # Z axis rotation scaling
-
+  action_mode: delta       # 'delta' or 'rel_to_start'
+  delta_base: prev_target   # delta 모드 전용: 'prev_target'(누적) or 'current_ee'(매 스텝 리셋)
+  chunk_steps: 1
+  interpolation: true      # chunk action을 순차적으로 실행 (학습 데이터 주기에 맞춤)
+  data_hz: 30              # 학습 데이터 수집 주기 (Hz)
 
 # FT sensor settings
 ft_sensor:
+  mode: sensor                # 'raw' (v2 호환, bias 없음) / 'sensor' (bias 제거 + offset) / 'fixed' (고정값)
+  # fixed_values: [-0.1900, -0.2520, -1.9958, 0.0370, -0.0070, 0.0073]
   rate_hz: 200.0
-  buffer_length: 100  # FT_RING_LEN
-  obs_horizon: 8  # FT_OBS_HORIZON
-  # low freq FT
-  # obs_horizon: 3
+  buffer_length: 100       # FT_RING_LEN
+  obs_horizon: 8           # FT_OBS_HORIZON
   calibration_samples: 200
 
-# Gravity compensator (mass/com and constants)
+# Gravity compensator
 gravity_compensator:
   mass_for_x: 0.73
   mass_for_y: 0.73
@@ -64,39 +67,54 @@ gravity_compensator:
 # Gripper control
 gripper:
   history_length: 5
-  close_threshold: 0.2 
-  open_threshold: 0.9 
-  close_count_threshold: 3  
+  close_threshold: 0.2
+  open_threshold: 0.9
+  close_count_threshold: 3
   open_count_threshold: 4
   http_port: 5000
 
 # Model settings
 model:
-  num_inference_steps: 16  # DDIM inference iterations
+  num_inference_steps: 2
+  custom_timesteps: [60, 10] 
+  ensemble: 1
+  save_intermediates: false
+
+# Debug
+debug:
+  headless: true
+  save_debug_csv: false
 
 # Coordinate transformation matrix
 coordinate_transform:
-  R_mat_pos : [
-          [0, 1, 0],
-          [1, 0, 0],
-          [0, 0, -1]
+  R_mat_pos: [
+    [0, 1, 0],
+    [1, 0, 0],
+    [0, 0, -1]
+  ]
+  R_mat_rot: [
+    [0, 1, 0],
+    [-1, 0, 0],
+    [0, 0, 1]
   ]
 
-  R_mat_rot : [
-          [0, 1, 0],
-          [-1, 0, 0],
-          [0, 0, 1]
-  ]
-
+# Contact assist
+contact_assist:
+  enabled: false
+  mode: fixed_direction 
+  force_threshold:  [1, 1, 1]    # N, 접촉 감지 기준
+  hysteresis: 0.5
+  insert_direction: [0, 0, -0.3]  # world frame 삽입 방향 (+x, 약간 -z), 자동 정규화
+  insert_offset: 0.005 
+  gain: 0.0002             # m/N
+  max_offset: 0.005        # m
 
 # Visualization
 visualization:
   camera_index: 0
 
-# File paths (will be overridden by command line arguments)
+# File paths
 paths:
+  output_dir: 'eval_results'
   output_video: 'output.mp4'
-  
-  # Specify the path to your trained model checkpoint (.ckpt)
-  # Example: "checkpoints/your_model.ckpt"
-  model_checkpoint: null
+  model_checkpoint: "/home/ailab-2204/Workspace/ManipForce_v2/outputs/gear_ods3_gear/checkpoints/epoch=0349-val_action_error=0.00512.ckpt"
