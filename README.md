@@ -22,7 +22,7 @@ mamba env create -f environment.yml
 conda activate manipforce
 
 # 4. Download pre-trained models
-python checkpoints/prepare_dinov2.py
+python checkpoints/prepare_dinov2.py --split-qkv
 ```
 
 ## 📡 Data Collection & Processing
