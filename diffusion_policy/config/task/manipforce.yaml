@@ -10,7 +10,12 @@ low_dim_obs_horizon: 2
 img_obs_horizon: 2
 ft_obs_horizon: 8  # Added: FT data sequence length # was originally 30
 action_horizon: 8 # origin 8
-ignore_proprioception: False
+action_mode: rel_to_start  # 'delta' or 'rel_to_start'
+# WARNING: changing rotation_repr requires updating action.shape below!
+#   axis_angle  → shape: [7]  (pos3 + aa3 + grip1)
+#   rotation_6d → shape: [10] (pos3 + rot6d + grip1)
+rotation_repr: axis_angle
+split_action_normalization: False  # False: unified range norm for all dims (default)
 
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
@@ -42,9 +47,9 @@ shape_meta: &shape_meta
       latency_steps: 0 # float
       down_sample_steps: ${task.obs_down_sample_steps} # int
       type: low_dim
-      ignore_by_policy: False
-  action: 
-    shape: [10]
+      ignore_by_policy: True
+  action:
+    shape: [7]  # WARNING: must match rotation_repr (axis_angle→7, rotation_6d→10)
     horizon: ${task.action_horizon}
     latency_steps: 0 # float
     down_sample_steps: ${task.obs_down_sample_steps} # int
@@ -65,6 +70,9 @@ dataset:
   cache_dir: null
   pose_repr: *pose_repr
   action_padding: False
+  action_mode: ${task.action_mode}
+  rotation_repr: ${task.rotation_repr}
+  split_action_normalization: ${task.split_action_normalization}
   temporally_independent_normalization: False
   repeat_frame_prob: 0.0
   modal_masking_prob: 0.0

@@ -37,22 +37,22 @@ from diffusion_policy.model.common.normalizer import LinearNormalizer
 register_codecs()
 
 def convert_action_8d_to_10d(action_8d):
-    """Convert 8D action (7D pose + 1D gripper) to 10D"""
+    """Convert 8D action (7D pose + 1D gripper) to 10D (rotation_6d)"""
     position = action_8d[..., :3]  # Keep position as is
     quat = action_8d[..., 3:7]     # Quaternion
     gripper_state = action_8d[..., 7:8]  # Gripper state
-    
+
     # Convert quaternion to rotation matrix
     from scipy.spatial.transform import Rotation as R
     rot = R.from_quat(quat)  # Need to check [x, y, z, w] order
     rotation_matrix = rot.as_matrix()
-    
+
     # Use the first two columns of the rotation matrix (6D)
     rotation_6d = np.concatenate([
         rotation_matrix[..., :3, 0],  # First column
         rotation_matrix[..., :3, 1]   # Second column
     ], axis=-1)
-    
+
     # Create final 10D vector (position + rotation_6d + gripper_state)
     action_10d = np.concatenate([
         position,      # 3D
@@ -60,6 +60,30 @@ def convert_action_8d_to_10d(action_8d):
         gripper_state  # 1D (actual gripper state)
     ], axis=-1)
     return action_10d
+
+
+def convert_action_8d_to_7d(action_8d):
+    """Convert 8D action (pos3 + quat4 + grip1) to 7D (pos3 + axis_angle3 + grip1).
+
+    Axis-angle representation:
+    - Direction of vector = rotation axis
+    - Magnitude of vector = rotation angle (radians)
+    - No rotation = [0, 0, 0]
+    - No degenerate dimensions (unlike 6D where r6d_0≈1, r6d_4≈1 for small rotations)
+    """
+    position = action_8d[..., :3]
+    quat = action_8d[..., 3:7]
+    gripper_state = action_8d[..., 7:8]
+
+    rot = R.from_quat(quat)
+    axis_angle = rot.as_rotvec()  # (*, 3)
+
+    action_7d = np.concatenate([
+        position,      # 3D
+        axis_angle,    # 3D
+        gripper_state  # 1D
+    ], axis=-1)
+    return action_7d
 
 def resize_with_padding(img, target_size=224):
     """
@@ -134,9 +158,15 @@ class ManipForceDataset(BaseDataset):
         seed: int=42,
         val_ratio: float=0.0,
         max_duration: Optional[float]=None,
-        ft_hz: float=200.0
+        ft_hz: float=200.0,
+        action_mode: str='delta',  # 'delta' or 'rel_to_start'
+        rotation_repr: str='rotation_6d',  # 'rotation_6d' (10D) or 'axis_angle' (rel_to_start7D)
+        split_action_normalization: bool=False  # separate pos/rot/grip normalization
     ):
         self.ft_hz = ft_hz
+        self.action_mode = action_mode
+        self.rotation_repr = rotation_repr
+        self.split_action_normalization = split_action_normalization
         self.pose_repr = pose_repr
         self.obs_pose_repr = self.pose_repr.get('obs_pose_repr', 'rel')
         self.action_pose_repr = self.pose_repr.get('action_pose_repr', 'rel')
@@ -393,7 +423,8 @@ class ManipForceDataset(BaseDataset):
             repeat_frame_prob=repeat_frame_prob,
             max_duration=max_duration,
             img_hz=30.0,  # image sampling rate (Hz)
-            ft_hz=self.ft_hz   # FT sensor sampling rate (Hz)
+            ft_hz=self.ft_hz,   # FT sensor sampling rate (Hz)
+            action_mode=self.action_mode
         )
         # Add debug output
         
@@ -508,7 +539,8 @@ class ManipForceDataset(BaseDataset):
             repeat_frame_prob=self.repeat_frame_prob,
             max_duration=self.max_duration,
             img_hz=30.0,  # image sampling rate (Hz)
-            ft_hz=self.ft_hz   # FT sensor sampling rate (Hz)
+            ft_hz=self.ft_hz,   # FT sensor sampling rate (Hz)
+            action_mode=self.action_mode
         )
         val_set.val_mask = ~self.val_mask
         return val_set
@@ -541,14 +573,23 @@ class ManipForceDataset(BaseDataset):
 
         self.sampler.ignore_rgb(False)
 
-        # # FT normalization (legacy code)
-        # arr_ft = np.stack(data_cache['ft_data'], axis=0)
-        # flat_ft = arr_ft.reshape(-1, arr_ft.shape[-1])
-        # normalizer['ft_data'] = get_range_normalizer_from_stat(array_to_stats(flat_ft))
-
-        # Action normalization (legacy code)
+        # Action normalization
         arr_ac = np.concatenate(data_cache['action'], axis=0)
-        normalizer['action'] = get_range_normalizer_from_stat(array_to_stats(arr_ac))
+        if self.split_action_normalization:
+            # Split normalization: pos / rot / gripper separately
+            pos_norm = get_range_normalizer_from_stat(array_to_stats(arr_ac[..., :3]))
+            if self.rotation_repr == 'axis_angle':
+                # axis-angle: 7D → pos(3) + aa(3) + grip(1)
+                rot_norm = get_range_normalizer_from_stat(array_to_stats(arr_ac[..., 3:6]))
+                grip_norm = get_range_normalizer_from_stat(array_to_stats(arr_ac[..., 6:7]))
+            else:
+                # rotation_6d: 10D → pos(3) + rot6d(6) + grip(1)
+                rot_norm = get_range_normalizer_from_stat(array_to_stats(arr_ac[..., 3:9]))
+                grip_norm = get_range_normalizer_from_stat(array_to_stats(arr_ac[..., 9:10]))
+            normalizer['action'] = concatenate_normalizer([pos_norm, rot_norm, grip_norm])
+        else:
+            # Legacy: unified range normalization for all dims
+            normalizer['action'] = get_range_normalizer_from_stat(array_to_stats(arr_ac))
 
         # add pose_wrt_start normalization
         if data_cache['pose_wrt_start']:
@@ -576,14 +617,8 @@ class ManipForceDataset(BaseDataset):
         data = self.sampler.sample_sequence(idx)
         obs_dict: Dict[str, np.ndarray] = {}
 
-        # Added 0813, fixed by SJ
         # Process only if pose_wrt_start exists in shape_meta
         if 'pose_wrt_start' in self.shape_meta['obs'] and 'pose_wrt_start' in data:
-            # position(3) + orientation(4) = 7D
-            # relative_pose = np.concatenate([
-            #     np.array(data['pose_wrt_start']['position']),
-            #     np.array(data['pose_wrt_start']['orientation'])
-            # ], axis=-1).astype(np.float32)
             obs_dict['pose_wrt_start'] = data['pose_wrt_start']
 
         # 3) RGB image processing + masking
@@ -630,13 +665,17 @@ class ManipForceDataset(BaseDataset):
                 raise ValueError(f"Unsupported action dimension: {action_data.shape[-1]}. Expected 7 or 8.")
                 
         else:
-            return {'obs': obs_dict, 'action': torch.zeros((8, 10))}
+            action_dim = 7 if self.rotation_repr == 'axis_angle' else 10
+            return {'obs': obs_dict, 'action': torch.zeros((8, action_dim))}
 
         # 8) numpy → torch conversion
         torch_obs = dict_apply(obs_dict, lambda x: torch.from_numpy(x).float() if isinstance(x, np.ndarray) else torch.tensor(x))
-        # 9) Action 8D → 10D conversion (pose + gripper)
+        # 9) Action 8D → rotation representation conversion
         if action_data.shape[-1] == 8:
-            action_data = convert_action_8d_to_10d(action_data)
+            if self.rotation_repr == 'axis_angle':
+                action_data = convert_action_8d_to_7d(action_data)   # 8D → 7D (pos3+aa3+grip1)
+            else:
+                action_data = convert_action_8d_to_10d(action_data)  # 8D → 10D (pos3+rot6d+grip1)
         torch_action = torch.from_numpy(action_data).float()
 
         final_result = {

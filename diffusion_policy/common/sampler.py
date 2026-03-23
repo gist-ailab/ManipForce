@@ -220,7 +220,8 @@ class ManipForceSequenceSampler:
         repeat_frame_prob: float=0.0,
         max_duration: Optional[float]=None,
         img_hz: float=30.0,  # image sampling rate (Hz)
-        ft_hz: float=200.0   # FT sensor sampling rate (Hz)
+        ft_hz: float=200.0,   # FT sensor sampling rate (Hz)
+        action_mode: str='delta'  # 'delta' or 'rel_to_start'
     ):
         self.episode_ends = replay_buffer.episode_ends[:]
         
@@ -303,14 +304,17 @@ class ManipForceSequenceSampler:
         if 'pose_wrt_start' in replay_buffer:
             self.replay_buffer['pose_wrt_start'] = replay_buffer['pose_wrt_start'][:]
 
+        self.action_mode = action_mode
         self.action_padding = action_padding
-        
-        # Reference
-        # Calculate number of FT frames (FT data count within image interval, including start point)
-        self.target_ft_frames = int(round(ft_hz / img_hz)) + 1
-        
-        # Limit to min 2, max 20
-        self.target_ft_frames = max(2, min(20, self.target_ft_frames))
+
+        # Use ft_obs_horizon from shape_meta (matches eval config's ft_sensor.obs_horizon)
+        ft_obs_horizon = shape_meta.get('obs', {}).get('ft_data', {}).get('horizon', None)
+        if ft_obs_horizon is not None:
+            self.target_ft_frames = int(ft_obs_horizon)
+        else:
+            # Fallback: calculate from Hz ratio
+            self.target_ft_frames = int(round(ft_hz / img_hz)) + 1
+            self.target_ft_frames = max(2, min(20, self.target_ft_frames))
         self.indices = indices
         self.rgb_keys = rgb_keys
         self.lowdim_keys = lowdim_keys
@@ -504,21 +508,65 @@ class ManipForceSequenceSampler:
         
         
         # action
-        input_arr = self.replay_buffer['action']
         action_horizon = self.key_horizon['action']
         action_latency_steps = self.key_latency_steps['action']
         assert action_latency_steps == 0
         action_down_sample_steps = self.key_down_sample_steps['action']
-        slice_end = min(end_idx, current_idx + (action_horizon - 1) * action_down_sample_steps + 1)
-        output = input_arr[current_idx: slice_end: action_down_sample_steps]
-        
-        # Padding logic
-        if output.shape[0] < action_horizon:
-            padding = np.repeat(output[-1:], action_horizon - output.shape[0], axis=0)
-            output = np.concatenate([output, padding], axis=0)
-        elif output.shape[0] > action_horizon:
-            output = output[:action_horizon]
-        
+
+        if self.action_mode == 'rel_to_start':
+            # Accumulate SE(3) deltas from replay_buffer['action']
+            # action[t] = [rel_pos_local(3), rel_quat_local(4), grip(1)]
+            # where rel_pos_local = curr_rot.inv().apply(next_pos - curr_pos)
+            #       rel_quat_local = (curr_rot.inv() * next_rot).as_quat()
+            input_arr = self.replay_buffer['action']
+            action_dim = input_arr.shape[-1]  # 7 or 8
+            has_grip = (action_dim == 8)
+
+            R_cum = st.Rotation.identity()
+            p_cum = np.zeros(3, dtype=np.float64)
+            rel_actions = []
+            prev_target = current_idx
+
+            for k in range(1, action_horizon + 1):
+                target_idx = min(current_idx + k * action_down_sample_steps, end_idx)
+
+                # Accumulate all intermediate deltas from prev_target to target_idx
+                for t in range(prev_target, target_idx):
+                    delta = input_arr[t]
+                    delta_pos = delta[:3].astype(np.float64)
+                    delta_quat = delta[3:7].astype(np.float64)
+                    delta_rot = st.Rotation.from_quat(delta_quat)
+
+                    # SE(3) composition: transform local delta into accumulated frame
+                    p_cum = p_cum + R_cum.apply(delta_pos)
+                    R_cum = R_cum * delta_rot
+
+                prev_target = target_idx
+
+                # Gripper: use target frame's value
+                grip_idx = min(target_idx, end_idx - 1)
+                grip_val = input_arr[grip_idx, -1:] if has_grip else np.array([1.0], dtype=np.float32)
+
+                rel_actions.append(np.concatenate([
+                    p_cum.astype(np.float32),
+                    R_cum.as_quat().astype(np.float32),  # scipy [x,y,z,w]
+                    grip_val.astype(np.float32)
+                ]))
+
+            output = np.stack(rel_actions, axis=0)  # (action_horizon, 8)
+        else:
+            # Original delta mode
+            input_arr = self.replay_buffer['action']
+            slice_end = min(end_idx, current_idx + (action_horizon - 1) * action_down_sample_steps + 1)
+            output = input_arr[current_idx: slice_end: action_down_sample_steps]
+
+            # Padding logic
+            if output.shape[0] < action_horizon:
+                padding = np.repeat(output[-1:], action_horizon - output.shape[0], axis=0)
+                output = np.concatenate([output, padding], axis=0)
+            elif output.shape[0] > action_horizon:
+                output = output[:action_horizon]
+
         result['action'] = output
 
         return result

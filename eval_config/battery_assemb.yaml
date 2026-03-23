@@ -1,31 +1,31 @@
-# GUMI Multimodal Inference Configuration - Battery Assembly (rel_to_start)
+# ManipForce Evaluation Configuration - Battery Assembly (rel_to_start)
 
 # Camera settings
 camera:
   main_camera:
     name: 'wrist_1'
-    serial_number: '241122306040' #241122306040, 339522300864
+    serial_number: '<YOUR_MAIN_CAM_SERIAL>'
     resolution: [1280, 800]
     fps: 30
   additional_camera:
     name: 'additional_camera'
-    serial_number: '427622273372'
+    serial_number: '<YOUR_ADDITIONAL_CAM_SERIAL>'
     resolution: [640, 480]
     fps: 30
 
 # Robot settings
 robot:
-  server_ip: '172.27.190.125'
+  server_ip: '<YOUR_ROBOT_SERVER_IP>'
   server_port: 4999
-  gravity_comp_pose: [0.54, 0.02, -0.05, 1.0, 0.0, 0.0, 0.0]  # 수직 자세 (그리퍼 아래) [x,y,z, qw,qx,qy,qz]
-  initial_pose: [0.54, 0.02, -0.12, 1.0, 0.0, 0.0, 0.0] # [x,y,z, qw,qx,qy,qz]
+  gravity_comp_pose: [0.54, 0.02, -0.05, 1.0, 0.0, 0.0, 0.0]  # vertical pose (gripper down) [x,y,z, qw,qx,qy,qz]
+  initial_pose: [0.54, 0.02, -0.12, 1.0, 0.0, 0.0, 0.0]       # [x,y,z, qw,qx,qy,qz]
   random_pos_range: 0.01
 
-  max_pos_speed: 0.7  # m/s
-  max_rot_speed: 0.7  # rad/s
+  max_pos_speed: 0.7   # m/s
+  max_rot_speed: 0.7   # rad/s
   initial_tilt_axis: 'y'
   initial_tilt_deg: 30
-  reset_lift_z: 0.05  # reset 시 현재 위치에서 z방향으로 올린 후 home 이동 (m, 0이면 바로 이동)
+  reset_lift_z: 0.05   # lift z (m) before moving to home on reset (0 = move directly)
 
 # Control parameters
 control:
@@ -33,24 +33,23 @@ control:
 
 # Image processing
 image:
-  history_length: 2  # IMG_HIST
+  history_length: 2        # number of image history frames
   target_resolution: [256, 256]  # [width, height]
-  down_sample_steps: 3  # 학습 config obs_down_sample_steps와 동일
+  down_sample_steps: 3     # must match training config obs_down_sample_steps
 
 # Action processing
 action:
-  action_mode: rel_to_start  # 'delta' or 'rel_to_start' (must match model training config)
-  delta_base: prev_target  # delta 모드 전용: 'prev_target'(누적) or 'current_ee'(매 스텝 리셋)
+  action_mode: rel_to_start  # 'delta' or 'rel_to_start' (must match training config)
+  delta_base: prev_target    # delta mode only: 'prev_target' (cumulative) or 'current_ee' (reset each step)
   data_hz: 30
-  chunk_steps: 4  # delta: N스텝 합산, rel_to_start: action[N-1] 선택 (1=첫스텝)
+  chunk_steps: 4             # delta: sum N steps, rel_to_start: select action[N-1] (1 = first step)
 
 # FT sensor settings
 ft_sensor:
-  fixed_values: [-0.1900, -0.2520, -1.9958, 0.0370, -0.0070, 0.0073]  # [Fx, Fy, Fz, Tx, Ty, Tz] — training 전체 평균
-  # fixed_values: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  fixed_values: [-0.19, -0.252, -1.996, 0.037, -0.007, 0.007]  # [Fx,Fy,Fz,Tx,Ty,Tz] training-set mean bias
   rate_hz: 200.0
-  buffer_length: 100  # FT_RING_LEN
-  obs_horizon: 8  # FT_OBS_HORIZON
+  buffer_length: 100         # ring buffer size
+  obs_horizon: 8             # FT observation horizon
   calibration_samples: 200
 
 # Gravity compensator (mass/com and constants)
@@ -78,21 +77,18 @@ model:
 # Debug mode
 debug:
   headless: false
-  save_debug_csv: true  # true: debug_tracking.csv, debug_rel_to_start.csv 저장
+  save_debug_csv: true  # save debug_tracking.csv / debug_rel_to_start.csv
 
-# Coordinate transformation matrix (rel_to_start에서는 사용 안 하지만 호환성 유지)
+# Coordinate transformation (body frame → world frame)
 coordinate_transform:
-  R_mat_pos : [
-          [0, 1, 0],
-          [1, 0, 0],
-          [0, 0, -1]
-  ]
-  R_mat_rot : [
-          [0, 1, 0],
-          [-1, 0, 0],
-          [0, 0, 1]
-  ]
-
+  R_mat_pos:
+    - [0, 1, 0]
+    - [1, 0, 0]
+    - [0, 0, -1]
+  R_mat_rot:
+    - [0, 1, 0]
+    - [-1, 0, 0]
+    - [0, 0, 1]
 
 # Visualization
 visualization:
@@ -100,6 +96,6 @@ visualization:
 
 # File paths
 paths:
-  output_dir: 'eval_results'  # base 폴더 (하위 폴더는 config/모드별 자동 생성)
+  output_dir: 'eval_results'  # base directory (subdirectories auto-created per config/mode)
   output_video: 'output.mp4'
-  model_checkpoint: "/home/ailab-2204/Workspace/ManipForce_v2/outputs/battery_ods3_battery/checkpoints/epoch=0499-val_action_error=0.00014.ckpt"
+  model_checkpoint: '<PATH_TO_YOUR_CHECKPOINT>'

@@ -14,7 +14,9 @@ proj_dim: 768
 
 task:
   obs_down_sample_steps: 3
-
+  ft_obs_horizon: 8
+  action_mode: rel_to_start  # 'delta' or 'rel_to_start'
+  
 policy:
   _target_: diffusion_policy.policy.diffusion_transformer_timm_policy.DiffusionTransformerTimmPolicy
 
