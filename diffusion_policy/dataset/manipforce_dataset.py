@@ -161,7 +161,8 @@ class ManipForceDataset(BaseDataset):
         ft_hz: float=200.0,
         action_mode: str='delta',  # 'delta' or 'rel_to_start'
         rotation_repr: str='rotation_6d',  # 'rotation_6d' (10D) or 'axis_angle' (rel_to_start7D)
-        split_action_normalization: bool=False  # separate pos/rot/grip normalization
+        split_action_normalization: bool=False,  # separate pos/rot/grip normalization
+        lazy_load: bool=True  # New mode for optimizing RAM (Direct access to zarr)
     ):
         self.ft_hz = ft_hz
         self.action_mode = action_mode
@@ -172,22 +173,34 @@ class ManipForceDataset(BaseDataset):
         self.action_pose_repr = self.pose_repr.get('action_pose_repr', 'rel')
         
         if cache_dir is None:
-            # Modify to handle both directory and zip files
-            if dataset_path.endswith('.zarr.zip'):
-                store = zarr.ZipStore(dataset_path, mode='r')
+            if lazy_load:
+                print("Loading dataset in Lazy mode (direct access, no RAM copy)...")
+                if dataset_path.endswith('.zarr.zip'):
+                    store = zarr.ZipStore(dataset_path, mode='r')
+                else:
+                    store = zarr.DirectoryStore(dataset_path)
+                replay_buffer = MultiModalReplayBuffer.create_from_group(
+                    group=zarr.group(store),
+                    image_keys=['handeye_cam_1', 'handeye_cam_2', 'action', 'state', 'img_timestamps', 'pose_wrt_start'],
+                    ft_keys=['ft_data', 'ft_timestamps']
+                )
             else:
-                store = zarr.DirectoryStore(dataset_path)            
-            replay_buffer = MultiModalReplayBuffer.copy_from_store(
-                src_store=store, 
-                store=zarr.MemoryStore(),
-                ft_store=zarr.MemoryStore(),  # Separate store for FT data
-                image_keys=['handeye_cam_1', 'handeye_cam_2', 'action', 'state', 'img_timestamps', 'pose_wrt_start'],  # image related data
-                ft_keys=['ft_data', 'ft_timestamps']  # FT related data
-            )            
-        
-            # Only close ZipStore
-            if isinstance(store, zarr.ZipStore):
-                store.close()
+                # Modify to handle both directory and zip files
+                if dataset_path.endswith('.zarr.zip'):
+                    store = zarr.ZipStore(dataset_path, mode='r')
+                else:
+                    store = zarr.DirectoryStore(dataset_path)            
+                replay_buffer = MultiModalReplayBuffer.copy_from_store(
+                    src_store=store, 
+                    store=zarr.MemoryStore(),
+                    ft_store=zarr.MemoryStore(),  # Separate store for FT data
+                    image_keys=['handeye_cam_1', 'handeye_cam_2', 'action', 'state', 'img_timestamps', 'pose_wrt_start'],  # image related data
+                    ft_keys=['ft_data', 'ft_timestamps']  # FT related data
+                )            
+            
+                # Only close ZipStore
+                if isinstance(store, zarr.ZipStore):
+                    store.close()
         else:
             # TODO: refactor into a stand alone function?
             # determine path name

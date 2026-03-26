@@ -609,6 +609,45 @@ class MultiModalReplayBuffer(ReplayBuffer):
         
         # Store FT data
         self.ft_data_root = ft_data_root
+
+    @classmethod
+    def create_from_group(cls, group, image_keys=None, ft_keys=None, **kwargs):
+        """
+        Create a lazy-loaded MultiModalReplayBuffer directly from a Zarr group,
+        isolating image and FT keys to avoid shape mismatch assertions.
+        """
+        if 'data' not in group:
+            raise ValueError("Group does not contain 'data'")
+            
+        if image_keys is None:
+            image_keys = ['img', 'action', 'state', 'img_timestamps']
+        if ft_keys is None:
+            ft_keys = ['ft_data', 'ft_timestamps']
+            
+        img_data = {k: group['data'][k] for k in image_keys if k in group['data']}
+        ft_data = {k: group['data'][k] for k in ft_keys if k in group['data']}
+        
+        img_root = {
+            'data': img_data,
+            'meta': {
+                'episode_ends': group['meta']['episode_ends']
+            }
+        }
+        
+        ft_data_root = None
+        if len(ft_data) > 0:
+            if 'episode_ft_ends' in group['meta']:
+                ft_episode_ends = group['meta']['episode_ft_ends']
+            else:
+                ft_episode_ends = group['meta']['episode_ends']
+            ft_data_root = {
+                'data': ft_data,
+                'meta': {
+                    'episode_ends': ft_episode_ends
+                }
+            }
+            
+        return cls(root=img_root, ft_data_root=ft_data_root)
     
     @classmethod
     def copy_from_store(cls, src_store, store=None, ft_store=None, 
