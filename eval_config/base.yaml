@@ -1,79 +1,101 @@
-# GUMI Multimodal Inference Configuration
+# ManipForce Evaluation Configuration - Battery Assembly (rel_to_start)
 
 # Camera settings
 camera:
   main_camera:
     name: 'wrist_1'
-    serial_number: '241122306040'
+    serial_number: '<YOUR_MAIN_CAM_SERIAL>'
     resolution: [1280, 800]
     fps: 30
   additional_camera:
     name: 'additional_camera'
-    serial_number: '427622273372'
+    serial_number: '<YOUR_ADDITIONAL_CAM_SERIAL>'
     resolution: [640, 480]
     fps: 30
 
 # Robot settings
 robot:
-  server_ip: '172.27.190.125'
+  server_ip: '<YOUR_ROBOT_SERVER_IP>'
   server_port: 4999
-  initial_pose: [0.49, -0.02, 0.12, 1.0, 0.0, 0.0, 0.0]  # [x, y, z, qw, qx, qy, qz]
-  max_pos_speed: 0.5  # m/s
-  max_rot_speed: 0.5  # rad/s
+  gravity_comp_pose: [0.54, 0.02, -0.05, 1.0, 0.0, 0.0, 0.0]  # vertical pose (gripper down) [x,y,z, qw,qx,qy,qz]
+  initial_pose: [0.54, 0.02, -0.12, 1.0, 0.0, 0.0, 0.0]       # [x,y,z, qw,qx,qy,qz]
+  random_pos_range: 0.01
+
+  max_pos_speed: 0.7   # m/s
+  max_rot_speed: 0.7   # rad/s
+  initial_tilt_axis: 'y'
+  initial_tilt_deg: 30
+  reset_lift_z: 0.05   # lift z (m) before moving to home on reset (0 = move directly)
 
 # Control parameters
 control:
   frequency: 200.0  # Hz
-  command_latency: 0.02  # seconds
-  action_exec_latency: 0.02  # seconds
 
 # Image processing
 image:
-  history_length: 2  # IMG_HIST
+  history_length: 2        # number of image history frames
   target_resolution: [256, 256]  # [width, height]
+  down_sample_steps: 3     # must match training config obs_down_sample_steps
 
 # Action processing
 action:
-  position_scale: 0.5 # image only 0.5, lowdim 0.1
-  rotation_xy_scale: 0.5  # X,Y axis rotation scaling
-  rotation_z_scale: 0.5 # Z axis rotation scaling
-  smoothing_alpha: 0.5  # Low-pass filter coefficient
+  action_mode: rel_to_start  # 'delta' or 'rel_to_start' (must match training config)
+  delta_base: prev_target    # delta mode only: 'prev_target' (cumulative) or 'current_ee' (reset each step)
+  data_hz: 30
+  chunk_steps: 4             # delta: sum N steps, rel_to_start: select action[N-1] (1 = first step)
 
 # FT sensor settings
 ft_sensor:
+  fixed_values: [-0.19, -0.252, -1.996, 0.037, -0.007, 0.007]  # [Fx,Fy,Fz,Tx,Ty,Tz] training-set mean bias
   rate_hz: 200.0
-  buffer_length: 10  # FT_RING_LEN
-  filter_alpha: 0.3  # 0.1~0.5
-  obs_horizon: 8  # FT_OBS_HORIZON
+  buffer_length: 100         # ring buffer size
+  obs_horizon: 8             # FT observation horizon
   calibration_samples: 200
+
+# Gravity compensator (mass/com and constants)
+gravity_compensator:
+  mass_for_x: 0.73
+  mass_for_y: 0.73
+  mass_for_z: 0.73
+  com_ft: [0.0, 0.01, 0.03]
+  g_const: 9.81
+  warmup_sec: 5.0
 
 # Gripper control
 gripper:
   history_length: 5
-  close_threshold: 0.1  # predicted < 0.1 for close signal
-  open_threshold: 0.9   # predicted >= 0.9 for open signal
-  close_count_threshold: 3  # minimum close signals in history
-  open_count_threshold: 4   # minimum open signals in history
+  close_threshold: 0.2
+  open_threshold: 0.9
+  close_count_threshold: 3
+  open_count_threshold: 4
   http_port: 5000
 
 # Model settings
 model:
-  num_inference_steps: 16  # DDIM inference iterations
-  warmup_steps: 10
+  num_inference_steps: 16
 
-# Coordinate transformation matrix
+# Debug mode
+debug:
+  headless: false
+  save_debug_csv: true  # save debug_tracking.csv / debug_rel_to_start.csv
+
+# Coordinate transformation (body frame → world frame)
 coordinate_transform:
-  R_mat: [
-    [0, -1, 0],
-    [1, 0, 0],
-    [0, 0, -1]
-  ]
+  R_mat_pos:
+    - [0, 1, 0]
+    - [1, 0, 0]
+    - [0, 0, -1]
+  R_mat_rot:
+    - [0, 1, 0]
+    - [-1, 0, 0]
+    - [0, 0, 1]
 
 # Visualization
 visualization:
   camera_index: 0
 
-# File paths (will be overridden by command line arguments)
+# File paths
 paths:
-  model_checkpoint: ''
-  output_video: 'output.mp4' 
+  output_dir: 'eval_results'  # base directory (subdirectories auto-created per config/mode)
+  output_video: 'output.mp4'
+  model_checkpoint: '<PATH_TO_YOUR_CHECKPOINT>'

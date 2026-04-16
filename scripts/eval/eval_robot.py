@@ -169,6 +169,8 @@ def main(config_path, model_checkpoint_path):
 
                         elif key == 't':
                             prev_target_pose = switch_to_teleop(S, policy, franka_api, server_ip, save_video=False)
+                            current_pos = prev_target_pose[:3].copy()
+                            current_rot = st.Rotation.from_quat(prev_target_pose[3:])
                             mode = S.current_mode = 'teleop'
                             print("\n텔레오퍼레이션 모드로 전환 (타이머 리셋)")
                             continue
@@ -295,6 +297,8 @@ def main(config_path, model_checkpoint_path):
                                 break
                             elif kp == 't':
                                 prev_target_pose = switch_to_teleop(S, policy, franka_api, server_ip, save_video=False)
+                                current_pos = prev_target_pose[:3].copy()
+                                current_rot = st.Rotation.from_quat(prev_target_pose[3:])
                                 mode = S.current_mode = 'teleop'
                                 print("\n텔레오퍼레이션 모드로 전환")
                                 continue

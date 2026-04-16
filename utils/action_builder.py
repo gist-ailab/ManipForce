@@ -1,19 +1,19 @@
-"""Action processing: coordinate transform, action queue, interpolated trajectory, target pose."""
+"""Action processing: coordinate transform, action queue, interpolated trajectory, target pose.
+
+Quaternion convention: XYZW (scipy) throughout. Server (Franka) also uses XYZW.
+All poses are [x, y, z, qx, qy, qz, qw].
+"""
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp as ScipySlerp
 
 from utils.real_inference_util import convert_action_10d_to_8d, convert_action_7d_to_8d
-from utils.pose_util import quat_xyzw_to_wxyz
 
 
-def transform_action_to_world(pose, current_ee_pose, config):
+def transform_action_to_world(pose, config):
     """Coordinate transform: model output (body-frame delta) → world-frame delta.
 
-    ArUco body frame → Franka world frame.
+    ArUco body frame → Franka world frame via R_mat.
     """
-    current_quat = np.roll(current_ee_pose[3:], -1)  # [w,x,y,z] -> [x,y,z,w]
-    current_rot = Rotation.from_quat(current_quat)
-
     R_mat_pos = np.array(config['coordinate_transform']['R_mat_pos'])
     R_mat_rot = np.array(config['coordinate_transform']['R_mat_rot'])
 
@@ -22,8 +22,6 @@ def transform_action_to_world(pose, current_ee_pose, config):
     rotvec = Rotation.from_quat(np.array(pose[3:7])).as_rotvec()
     R_new = R_mat_rot @ Rotation.from_rotvec(rotvec).as_matrix() @ R_mat_rot.T
     rel_quat = Rotation.from_matrix(R_new).as_quat()
-
-    rel_pos = current_rot.inv().apply(rel_pos)
 
     return np.concatenate([rel_pos, rel_quat])
 
@@ -55,23 +53,16 @@ def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose,
     steps_per_action = max(1, int(round(step_duration / control_dt)))
 
     delta_base = config['action'].get('delta_base', 'prev_target')
-    if action_mode == 'delta' and delta_base == 'current_ee':
+    if delta_base == 'current_ee':
         start_pose = current_ee_pose.copy()
     else:
         start_pose = base_pose.copy()
 
-    if action_mode != 'delta':
-        ee_quat_xyzw = np.array([current_ee_pose[4], current_ee_pose[5],
-                                  current_ee_pose[6], current_ee_pose[3]])
-        identity_wp = current_ee_pose.copy()
-        identity_wp[3:] = ee_quat_xyzw
-        waypoints = [identity_wp.copy()]
-    else:
-        waypoints = [start_pose.copy()]
+    waypoints = [start_pose.copy()]
     current_wp = waypoints[0].copy()
 
     for action_8d in action_queue:
-        transformed = transform_action_to_world(action_8d, current_ee_pose, config)
+        transformed = transform_action_to_world(action_8d, config)
         if action_mode == 'delta':
             wp = current_wp.copy()
             wp[:3] += transformed[:3]
@@ -79,11 +70,11 @@ def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose,
             delta_rot = Rotation.from_quat(transformed[3:])
             wp[3:] = (base_rot * delta_rot).as_quat()
         else:
-            wp = current_ee_pose.copy()
+            wp = start_pose.copy()
             wp[:3] += transformed[:3]
-            cur_rot = Rotation.from_quat(ee_quat_xyzw)
+            base_rot = Rotation.from_quat(start_pose[3:])
             action_rot = Rotation.from_quat(transformed[3:7])
-            wp[3:] = (cur_rot * action_rot).as_quat()
+            wp[3:] = (base_rot * action_rot).as_quat()
         current_wp = wp.copy()
         waypoints.append(wp)
 
@@ -110,17 +101,13 @@ def build_interpolated_trajectory(action_queue, base_pose, current_ee_pose,
 
     trajectory.append(waypoints[-1].copy())
 
-    if action_mode != 'delta':
-        for pose in trajectory:
-            pose[3:] = quat_xyzw_to_wxyz(pose[3:])
-
     return trajectory
 
 
 def compute_target_pose(action_8d, action_mode, current_ee_pose, prev_target_pose,
                         policy, config):
     """Compute target pose from action. Returns (this_target_pose, transformed_action, debug_info)."""
-    transformed_action = transform_action_to_world(action_8d, current_ee_pose, config)
+    transformed_action = transform_action_to_world(action_8d, config)
 
     debug_info = {}
 
@@ -128,9 +115,7 @@ def compute_target_pose(action_8d, action_mode, current_ee_pose, prev_target_pos
         this_target = np.zeros(7, dtype=np.float64)
         this_target[:3] = current_ee_pose[:3] + transformed_action[:3]
 
-        ee_quat_xyzw = np.array([current_ee_pose[4], current_ee_pose[5],
-                                  current_ee_pose[6], current_ee_pose[3]])
-        cur_rot = Rotation.from_quat(ee_quat_xyzw)
+        cur_rot = Rotation.from_quat(current_ee_pose[3:])
         action_rot = Rotation.from_quat(transformed_action[3:7])
         target_rot = cur_rot * action_rot
         this_target[3:] = target_rot.as_quat()
@@ -175,8 +160,5 @@ def compute_target_pose(action_8d, action_mode, current_ee_pose, prev_target_pos
     this_target[3:] = new_quat / np.linalg.norm(new_quat)
 
     debug_info['target_euler'] = target_euler
-
-    if action_mode == 'rel_to_start':
-        this_target[3:] = quat_xyzw_to_wxyz(this_target[3:])
 
     return this_target, transformed_action, debug_info

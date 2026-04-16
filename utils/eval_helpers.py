@@ -46,21 +46,18 @@ def _compute_pose_wrt_start(poses, start_pose):
     """학습과 동일한 방식으로 pose_wrt_start 계산: relative position + relative quaternion.
 
     Args:
-        poses: list of 7D poses [x,y,z, qw,qx,qy,qz] (franka wxyz convention)
-        start_pose: 7D start pose [x,y,z, qw,qx,qy,qz]
+        poses: list of 7D poses [x,y,z, qx,qy,qz,qw] (XYZW from server)
+        start_pose: 7D start pose [x,y,z, qx,qy,qz,qw] (XYZW)
     Returns:
-        (N, 7) array of relative poses [dx,dy,dz, rel_qx,rel_qy,rel_qz,rel_qw] (xyzw for scipy)
+        (N, 7) array of relative poses [dx,dy,dz, rel_qx,rel_qy,rel_qz,rel_qw] (XYZW)
     """
     start_pos = start_pose[:3]
-    # franka: [qw,qx,qy,qz] → scipy xyzw: [qx,qy,qz,qw]
-    start_quat_xyzw = np.array([start_pose[4], start_pose[5], start_pose[6], start_pose[3]])
-    start_rot = R.from_quat(start_quat_xyzw)
+    start_rot = R.from_quat(start_pose[3:])
 
     result = np.zeros((len(poses), 7), dtype=np.float32)
     for i, pose in enumerate(poses):
         result[i, :3] = pose[:3] - start_pos
-        curr_quat_xyzw = np.array([pose[4], pose[5], pose[6], pose[3]])
-        curr_rot = R.from_quat(curr_quat_xyzw)
+        curr_rot = R.from_quat(pose[3:])
         rel_rot = start_rot.inv() * curr_rot
         result[i, 3:] = rel_rot.as_quat()  # xyzw
     return result

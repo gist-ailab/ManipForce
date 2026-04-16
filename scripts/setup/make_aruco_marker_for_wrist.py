@@ -16,8 +16,8 @@ A4_WIDTH_MM  = 210.0
 A4_HEIGHT_MM = 297.0
 
 # Marker settings (physical size in mm)
-border_size_mm = 59   # black border ~5.9cm
-marker_size_mm = 53   # marker slightly smaller than border
+border_size_mm = 57   # black border ~5.9cm
+marker_size_mm = 51   # marker slightly smaller than border
 
 DPI = 300
 MM_PER_INCH = 25.4
