@@ -671,7 +671,7 @@ class ManipForceDataset(BaseDataset):
             if action_data.shape[-1] == 7:
                 T = action_data.shape[0]
                 # Gripper status dummy value (default: 1.0 = open)
-                dummy_gripper = np.ones((T, 1), dtype=np.float32)  # (T, 1)
+                dummy_gripper = np.zeros((T, 1), dtype=np.float32)  # (T, 1)
                 action_data = np.concatenate([action_data, dummy_gripper], axis=-1)  # (T, 8)
             elif action_data.shape[-1] == 8:
                 pass
