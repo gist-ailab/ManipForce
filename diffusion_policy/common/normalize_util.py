@@ -21,6 +21,22 @@ def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=
         input_stats_dict=stat
     )
 
+def get_gaussian_normalizer_from_stat(stat, std_eps=1e-7):
+    # Z-score normalization: (x - mean) / std
+    input_mean = stat['mean']
+    input_std = stat['std']
+    ignore_dim = input_std < std_eps
+    input_std[ignore_dim] = 1.0
+    scale = 1.0 / input_std
+    offset = -scale * input_mean
+    offset[ignore_dim] = -input_mean[ignore_dim]
+
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=stat
+    )
+
 def get_image_range_normalizer():
     scale = np.array([2], dtype=np.float32)
     offset = np.array([-1], dtype=np.float32)

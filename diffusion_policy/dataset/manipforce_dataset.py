@@ -20,6 +20,7 @@ from diffusion_policy.common.normalize_util import (
     array_to_stats,
     concatenate_normalizer,
     get_identity_normalizer_from_stat,
+    get_gaussian_normalizer_from_stat,
     get_image_identity_normalizer,
     get_range_normalizer_from_stat,
 )
